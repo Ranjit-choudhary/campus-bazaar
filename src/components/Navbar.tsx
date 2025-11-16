@@ -15,28 +15,52 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from './ui/dropdown-menu';
+import { Skeleton } from './ui/skeleton'; // Import Skeleton for loading UI
 
 const Navbar = () => {
   const navigate = useNavigate();
   const [searchQuery, setSearchQuery] = useState('');
   const { cartItemCount } = useCart();
   const [user, setUser] = useState<any>(null);
+  const [loading, setLoading] = useState(true); // <-- ADD THIS STATE
 
   useEffect(() => {
-    const getSession = async () => {
-      const { data: { session } } = await supabase.auth.getSession();
-      setUser(session?.user ?? null);
-    };
-    getSession();
+    // We REMOVE the initial getSessionAndRole() call to prevent the race condition.
+    // onAuthStateChange fires on page load *anyway* with the cached session.
 
-    const { data: authListener } = supabase.auth.onAuthStateChange((_event, session) => {
-      setUser(session?.user ?? null);
-    });
+    // Listen for auth changes and fetch role
+    const { data: authListener } = supabase.auth.onAuthStateChange(
+      async (_event, session) => {
+        try {
+          if (session?.user) {
+            // Fetch the role from the public.users table
+            const { data: userData, error: userError } = await supabase
+              .from('users')
+              .select('role')
+              .eq('id', session.user.id)
+              .single();
+            
+            if (userError) throw userError;
+            
+            // Merge the auth user data with the public user data (role)
+            setUser({ ...session.user, ...userData });
+          } else {
+            setUser(null);
+          }
+        } catch (error: any) {
+          console.error("Error fetching user role:", error.message);
+          setUser(session?.user || null); // Set user without role on error
+        } finally {
+          // This is the key: set loading to false AFTER the first auth check
+          setLoading(false);
+        }
+      }
+    );
 
     return () => {
       authListener.subscription.unsubscribe();
     };
-  }, []);
+  }, []); // The empty dependency array ensures this runs once
 
   const handleSearch = (e: React.FormEvent) => {
     e.preventDefault();
@@ -60,9 +84,6 @@ const Navbar = () => {
           <nav className="flex items-center gap-6 text-sm">
             <Link to="/shop-all" className="transition-colors hover:text-foreground/80 text-foreground/60">Shop All</Link>
             <Link to="/themes" className="transition-colors hover:text-foreground/80 text-foreground/60">Themes</Link>
-            {/* <Link to="/help" className="transition-colors hover:text-foreground/80 text-foreground/60">Help</Link> */}
-            {/* <Link to="/return-policy" className="transition-colors hover:text-foreground/80 text-foreground/60">Return Policy</Link> */}
-            
           </nav>
         </div>
 
@@ -84,7 +105,13 @@ const Navbar = () => {
                 </span>
               )}
             </Button>
-            {user ? (
+
+            {/* --- MODIFIED RENDER LOGIC --- */}
+            {loading ? (
+              // Show a placeholder while checking auth to prevent flicker
+              <Skeleton className="h-8 w-8 rounded-full" />
+            ) : user ? (
+              // User is logged in, show dropdown
               <DropdownMenu>
                 <DropdownMenuTrigger asChild>
                   <Button variant="ghost" className="relative h-8 w-8 rounded-full">
@@ -99,13 +126,37 @@ const Navbar = () => {
                     <div className="flex flex-col space-y-1">
                       <p className="text-sm font-medium leading-none">{user.user_metadata.full_name}</p>
                       <p className="text-xs leading-none text-muted-foreground">{user.email}</p>
+                      {user.role && (
+                        <p className="text-xs leading-none text-blue-600 capitalize pt-1 font-medium">
+                          {user.role}
+                        </p>
+                      )}
                     </div>
                   </DropdownMenuLabel>
                   <DropdownMenuSeparator />
-                  <DropdownMenuItem onClick={() => navigate('/profile')}>
-                    <User className="mr-2 h-4 w-4" />
-                    <span>Profile</span>
-                  </DropdownMenuItem>
+                  
+                  {user.role === 'admin' ? (
+                    <DropdownMenuItem onClick={() => navigate('/admin/dashboard')}>
+                      <User className="mr-2 h-4 w-4" />
+                      <span>Admin Dashboard</span>
+                    </DropdownMenuItem>
+                  ) : user.role === 'retailer' ? (
+                    <DropdownMenuItem onClick={() => navigate('/retailer/dashboard')}>
+                      <User className="mr-2 h-4 w-4" />
+                      <span>Retailer Dashboard</span>
+                    </DropdownMenuItem>
+                  ) : user.role === 'wholesaler' ? (
+                    <DropdownMenuItem onClick={() => navigate('/wholesaler/dashboard')}>
+                      <User className="mr-2 h-4 w-4" />
+                      <span>Wholesaler Dashboard</span>
+                    </DropdownMenuItem>
+                  ) : (
+                    <DropdownMenuItem onClick={() => navigate('/profile')}>
+                      <User className="mr-2 h-4 w-4" />
+                      <span>Profile</span>
+                    </DropdownMenuItem>
+                  )}
+                  
                   <DropdownMenuSeparator />
                   <DropdownMenuItem onClick={handleLogout}>
                     <LogOut className="mr-2 h-4 w-4" />
@@ -114,8 +165,11 @@ const Navbar = () => {
                 </DropdownMenuContent>
               </DropdownMenu>
             ) : (
+              // User is logged out, show Login button
               <Button onClick={() => navigate('/login')}>Login</Button>
             )}
+            {/* --- END MODIFICATION --- */}
+            
           </nav>
         </div>
       </div>

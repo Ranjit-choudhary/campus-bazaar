@@ -20,6 +20,9 @@ import TermsAndConditionsPage from './pages/TermsAndConditionsPage';
 import AboutUsPage from './pages/AboutUsPage';
 import HelpPage from './pages/HelpPage';
 import ReturnPolicyPage from './pages/ReturnPolicyPage';
+import ProtectedRoute from './components/ProtectedRoute';
+import RetailerDashboard from './pages/RetailerDashboard';
+import WholesalerDashboard from './pages/WholesalerDashboard'; // --- NEWLY ADDED ---
 
 function App() {
   return (
@@ -45,8 +48,22 @@ function App() {
             
             {/* Admin Routes */}
             <Route path="/admin/login" element={<AdminLogin />} />
-            <Route path="/admin/dashboard" element={<AdminDashboard />} />
             
+            <Route element={<ProtectedRoute role="admin" />}>
+              <Route path="/admin/dashboard" element={<AdminDashboard />} />
+            </Route>
+
+            {/* Retailer Dashboard Route */}
+            <Route element={<ProtectedRoute role="retailer" />}>
+              <Route path="/retailer/dashboard" element={<RetailerDashboard />} />
+            </Route>
+            
+            {/* --- NEWLY ADDED ROUTE --- */}
+            <Route element={<ProtectedRoute role="wholesaler" />}>
+              <Route path="/wholesaler/dashboard" element={<WholesalerDashboard />} />
+            </Route>
+            {/* --- END OF NEWLY ADDED ROUTE --- */}
+
             {/* 404 Not Found */}
             <Route path="*" element={<NotFound />} />
           </Routes>

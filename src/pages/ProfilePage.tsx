@@ -1,3 +1,4 @@
+// src/pages/ProfilePage.tsx
 import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { supabase } from '@/lib/supabase';
@@ -9,7 +10,7 @@ import { toast } from 'sonner';
 
 const ProfilePage = () => {
   const navigate = useNavigate();
-  const [profile, setProfile] = useState<any>(null);
+  const [profile, setProfile] = useState<any>(null); // This state now holds data from 'users' table
   const [address, setAddress] = useState<any>(null);
   const [orders, setOrders] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
@@ -21,8 +22,12 @@ const ProfilePage = () => {
         navigate('/login');
         return;
       }
-      const { data: profileData } = await supabase.from('profiles').select('*').eq('id', user.id).single();
+
+      // --- MODIFIED QUERY ---
+      // Changed from 'profiles' to 'users'
+      const { data: profileData } = await supabase.from('users').select('*').eq('id', user.id).single();
       setProfile(profileData);
+      // --- END MODIFICATION ---
 
       const { data: addressData } = await supabase.from('addresses').select('*').eq('user_id', user.id).single();
       setAddress(addressData);
@@ -54,12 +59,14 @@ const ProfilePage = () => {
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-4">
                 <Avatar className="h-16 w-16">
+                  {/* MODIFIED: Use new column names */}
                   <AvatarImage src={profile?.avatar_url} alt={profile?.full_name} />
                   <AvatarFallback>{profile?.full_name?.charAt(0) || 'U'}</AvatarFallback>
                 </Avatar>
                 <div>
                   <CardTitle className="text-2xl">{profile?.full_name}</CardTitle>
                   <p className="text-muted-foreground">{profile?.email}</p>
+                  {/* END MODIFICATION */}
                 </div>
               </div>
               <Button variant="outline" onClick={handleLogout}>Logout</Button>
@@ -88,7 +95,6 @@ const ProfilePage = () => {
                       </div>
                       <div className="text-right">
                         <p className="font-semibold">₹{order.total_amount}</p>
-                        {/* Corrected: Capitalize the status for better readability */}
                         <p className="text-sm text-green-600 capitalize">{order.status}</p>
                       </div>
                     </CardContent>

@@ -1,3 +1,4 @@
+// src/pages/AdminDashboard.tsx
 import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
@@ -11,50 +12,23 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { toast } from 'sonner';
 import { Plus, Edit, Trash2, LogOut } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
+// --- NEW ---
+// Import all our types from the central types file
+import { Product, Theme, Order, User, UserData, Address } from '@/types'; 
+// --- END NEW ---
 
-// Interfaces
-interface Product {
-  id: number;
-  name: string;
-  price: number;
-  description: string | null;
-  category: string | null;
-  theme_id?: string | null;
-  inStock: boolean;
-  images: string[] | null;
-  tag?: string | null;
-}
-interface Profile {
-  full_name: string;
-  email: string;
-}
-interface Address {
-  hostel: string;
-  room_number: string;
-}
-interface Theme {
-  id: string;
-  name: string;
-  description: string | null;
-  image: string | null;
-  header_image?: string | null;
-  tag?: string | null;
-}
-interface Order {
-  id: string;
-  created_at: string;
-  total_amount: number;
-  status: string;
-  user_id: string;
-  profiles: Profile | null;
-  addresses: Address | null;
-}
+
+// --- REMOVED ALL LOCAL INTERFACES (Product, Profile, Address, Theme, Order, User) ---
+
 
 const AdminDashboard = () => {
   const navigate = useNavigate();
+  const [loading, setLoading] = useState(true); 
   const [products, setProducts] = useState<Product[]>([]);
   const [themes, setThemes] = useState<Theme[]>([]);
   const [orders, setOrders] = useState<Order[]>([]);
+  const [users, setUsers] = useState<User[]>([]); 
+  const [currentUser, setCurrentUser] = useState<any>(null); 
 
   // Dialog states
   const [isProductDialogOpen, setIsProductDialogOpen] = useState(false);
@@ -69,25 +43,67 @@ const AdminDashboard = () => {
     name: '', description: '', image: '', header_image: '', tag: ''
   });
 
-  // Fetch data on mount
+  // Define available roles
+  const userRoles = ['user', 'admin', 'wholesaler', 'retailer']; // 'user' is your "customer"
+
+  // Fetch all data on mount
   useEffect(() => {
-    const checkUserAndFetchData = async () => {
-      const { data: { user } } = await supabase.auth.getUser();
-      if (!user) {
-        navigate('/admin/login');
-      } else {
-        fetchProducts();
-        fetchThemes();
-        fetchOrders();
+    const checkUserAndFetchAllData = async () => {
+      setLoading(true); 
+      try {
+        const { data: { user } } = await supabase.auth.getUser();
+        if (!user) {
+          navigate('/admin/login');
+          return; 
+        }
+        setCurrentUser(user);
+        
+        // Fetch all data in parallel
+        // Fetch all data in parallel
+        const [productsRes, themesRes, ordersRes, usersRes] = await Promise.all([
+          supabase.from('products').select(),
+          supabase.from('themes').select(),
+          supabase.from('orders').select('*, users!inner(*), addresses(*)'), // Correctly join users
+          supabase.from('users').select('id, email, role') // <-- THIS IS THE FIX
+        ]);
+
+        // Handle products
+        if (productsRes.error) toast.error(`Products Error: ${productsRes.error.message}`);
+        setProducts(productsRes.data || []);
+
+        // Handle themes
+        if (themesRes.error) toast.error(`Themes Error: ${themesRes.error.message}`);
+        setThemes(themesRes.data || []);
+
+        // Handle orders
+        if (ordersRes.error) toast.error(`Orders Error: ${ordersRes.error.message}`);
+        setOrders(ordersRes.data || []);
+
+        // Handle users
+        if (usersRes.error) {
+          toast.error(`Users Error: ${usersRes.error.message}`);
+        } else {
+          setUsers((usersRes.data as User[]) || []);
+        }
+
+      } catch (e: any) {
+        toast.error(`An unexpected error occurred: ${e.message}`);
+      } finally {
+        setLoading(false); 
       }
     }
-    checkUserAndFetchData();
+    checkUserAndFetchAllData();
   }, [navigate]);
 
-  // Data fetchers
+  // Data fetchers for single refresh
   const fetchProducts = async () => setProducts((await supabase.from('products').select()).data || []);
   const fetchThemes = async () => setThemes((await supabase.from('themes').select()).data || []);
-  const fetchOrders = async () => setOrders((await supabase.from('orders').select()).data || []);
+  const fetchOrders = async () => setOrders((await supabase.from('orders').select('*, users!inner(*), addresses(*)')).data || []);
+  const fetchUsers = async () => {
+    const { data, error } = await supabase.from('users').select('id, email, role'); // <-- THIS IS THE FIX
+    if (error) toast.error(`Failed to refresh users: ${error.message}`);
+    else setUsers(data as User[]);
+  };
 
   // Logout
   const handleLogout = async () => {
@@ -114,6 +130,7 @@ const AdminDashboard = () => {
     setProductFormData({ name: '', price: '', description: '', category: '', theme_id: '', images: '', tag: '' });
     setIsProductDialogOpen(true);
   };
+  // This function will now work as 'product' will have the correct type
   const handleEditProduct = (product: Product) => {
     setEditingProduct(product);
     setProductFormData({
@@ -150,6 +167,7 @@ const AdminDashboard = () => {
   };
 
   // Theme handlers
+  // This function will now work as 'theme' will have the correct type
   const handleAddTheme = () => {
     setEditingTheme(null);
     setThemeFormData({ name: '', description: '', image: '', header_image: '', tag: '' });
@@ -197,10 +215,40 @@ const AdminDashboard = () => {
     }
   };
 
+  // User Role Handler
+  const handleRoleChange = async (userId: string, newRole: string) => {
+    if (userId === currentUser.id && newRole !== 'admin') {
+      toast.error("You cannot remove your own admin role.");
+      fetchUsers(); // Revert UI
+      return;
+    }
+
+    const { error } = await supabase
+      .from('users') // This is public.users
+      .update({ role: newRole })
+      .eq('id', userId);
+
+    if (error) {
+      toast.error(`Failed to update role: ${error.message}`);
+      fetchUsers(); // Revert UI
+    } else {
+      toast.success('User role updated!');
+      setUsers(users.map(u => u.id === userId ? { ...u, role: newRole } : u));
+    }
+  };
+
   // Options
   const productCategories = ['posters', 'bedsheets', 'lighting', 'stationery', 'others'];
   const tags = ['hot', 'bestseller'];
   const orderStatuses = ['placed', 'out for delivery', 'delivered', 'cancelled'];
+
+  if (loading) {
+    return (
+      <div className="min-h-screen bg-background flex items-center justify-center">
+        <div>Loading Admin Dashboard...</div>
+      </div>
+    );
+  }
 
   return (
     <div className="min-h-screen bg-background">
@@ -216,10 +264,11 @@ const AdminDashboard = () => {
 
       <main className="container mx-auto px-4 py-8">
         <Tabs defaultValue="products">
-          <TabsList>
+          <TabsList className="grid w-full grid-cols-4">
             <TabsTrigger value="products">Products</TabsTrigger>
             <TabsTrigger value="orders">Orders</TabsTrigger>
             <TabsTrigger value="themes">Themes</TabsTrigger>
+            <TabsTrigger value="users">Users</TabsTrigger>
           </TabsList>
 
           {/* Products Tab */}
@@ -271,8 +320,9 @@ const AdminDashboard = () => {
                       <TableRow key={o.id}>
                         <TableCell>{o.id.substring(0, 8)}</TableCell>
                         <TableCell>
-                          <div>{o.profiles?.full_name}</div>
-                          <div className="text-muted-foreground text-sm">{o.profiles?.email}</div>
+                          {/* This now correctly uses 'users' which is imported */}
+                          <div>{o.users?.full_name}</div>
+                          <div className="text-muted-foreground text-sm">{o.users?.email}</div>
                         </TableCell>
                         <TableCell>{o.addresses?.hostel}, Room {o.addresses?.room_number}</TableCell>
                         <TableCell>₹{o.total_amount}</TableCell>
@@ -325,11 +375,58 @@ const AdminDashboard = () => {
               </CardContent>
             </Card>
           </TabsContent>
+
+          {/* Users Tab */}
+          <TabsContent value="users">
+            <Card>
+              <CardHeader>
+                <CardTitle>User Role Management</CardTitle>
+              </CardHeader>
+              <CardContent>
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>Email</TableHead>
+                      <TableHead>User ID</TableHead>
+                      <TableHead>Role</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {users.map(user => (
+                      <TableRow key={user.id}>
+                        <TableCell>{user.email}</TableCell>
+                        <TableCell className="font-mono text-xs">{user.id}</TableCell>
+                        <TableCell>
+                          <Select 
+                            value={user.role || 'user'} 
+                            onValueChange={(newRole) => handleRoleChange(user.id, newRole)}
+                            disabled={user.id === currentUser?.id} // Disable changing your own role
+                          >
+                            <SelectTrigger className="w-[180px]">
+                              <SelectValue placeholder="Select role" />
+                            </SelectTrigger>
+                            <SelectContent>
+                              {userRoles.map(role => (
+                                <SelectItem key={role} value={role}>
+                                  {role.charAt(0).toUpperCase() + role.slice(1)}
+                                </SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
+                        </TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              </CardContent>
+            </Card>
+          </TabsContent>
+
         </Tabs>
       </main>
 
       {/* Product Dialog */}
-      <Dialog open={isProductDialogOpen} onOpenChange={setIsProductDialogOpen}>
+      <Dialog open={isProductDialogOpen} onOpenChange={closeProductDialog}>
         <DialogContent>
           <DialogHeader><DialogTitle>{editingProduct ? 'Edit' : 'Add'} Product</DialogTitle></DialogHeader>
           <form onSubmit={handleProductSubmit} className="space-y-4">
@@ -339,7 +436,7 @@ const AdminDashboard = () => {
             <Textarea placeholder="Image URLs (comma-separated)" value={productFormData.images} onChange={e => setProductFormData({ ...productFormData, images: e.target.value })} required />
             <Select value={productFormData.category} onValueChange={value => setProductFormData({ ...productFormData, category: value })}>
               <SelectTrigger><SelectValue placeholder="Select category" /></SelectTrigger>
-              <SelectContent>{productCategories.map(cat => <SelectItem key={cat} value={cat}>{cat}</SelectItem>)}</SelectContent>
+              <SelectContent>{productCategories.map(cat => <SelectItem key={cat} value={cat}>{cat.charAt(0).toUpperCase() + cat.slice(1)}</SelectItem>)}</SelectContent>
             </Select>
             <Select value={productFormData.theme_id} onValueChange={value => setProductFormData({ ...productFormData, theme_id: value })}>
               <SelectTrigger><SelectValue placeholder="Select theme" /></SelectTrigger>
@@ -352,7 +449,7 @@ const AdminDashboard = () => {
               <SelectTrigger><SelectValue placeholder="Select tag" /></SelectTrigger>
               <SelectContent>
                 <SelectItem value="">None</SelectItem>
-                {tags.map(tag => <SelectItem key={tag} value={tag}>{tag}</SelectItem>)}
+                {tags.map(tag => <SelectItem key={tag} value={tag}>{tag.charAt(0).toUpperCase() + tag.slice(1)}</SelectItem>)}
               </SelectContent>
             </Select>
             <Button type="submit">Save</Button>
@@ -361,7 +458,7 @@ const AdminDashboard = () => {
       </Dialog>
 
       {/* Theme Dialog */}
-      <Dialog open={isThemeDialogOpen} onOpenChange={setIsThemeDialogOpen}>
+      <Dialog open={isThemeDialogOpen} onOpenChange={closeThemeDialog}>
         <DialogContent>
           <DialogHeader><DialogTitle>{editingTheme ? 'Edit' : 'Add'} Theme</DialogTitle></DialogHeader>
           <form onSubmit={handleThemeSubmit} className="space-y-4">
@@ -373,7 +470,7 @@ const AdminDashboard = () => {
               <SelectTrigger><SelectValue placeholder="Select tag" /></SelectTrigger>
               <SelectContent>
                 <SelectItem value="">None</SelectItem>
-                {tags.map(tag => <SelectItem key={tag} value={tag}>{tag}</SelectItem>)}
+                {tags.map(tag => <SelectItem key={tag} value={tag}>{tag.charAt(0).toUpperCase() + tag.slice(1)}</SelectItem>)}
               </SelectContent>
             </Select>
             <Button type="submit">Save</Button>
