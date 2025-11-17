@@ -67,7 +67,7 @@ const Index = () => {
           </div>
           <div className="text-center mt-12">
             <Button variant="outline" onClick={() => navigate('/themes')}>
-              View All Themes 123 <ArrowRight className="ml-2 h-4 w-4" />
+              View All Themes 456789 <ArrowRight className="ml-2 h-4 w-4" />
             </Button>
           </div>
         </div>
