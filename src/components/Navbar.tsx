@@ -111,59 +111,61 @@ const Navbar = () => {
               // Show a placeholder while checking auth to prevent flicker
               <Skeleton className="h-8 w-8 rounded-full" />
             ) : user ? (
-              // User is logged in, show dropdown
-              <DropdownMenu>
-                <DropdownMenuTrigger asChild>
-                  <Button variant="ghost" className="relative h-8 w-8 rounded-full">
-                    <Avatar className="h-8 w-8">
-                      <AvatarImage src={user.user_metadata.avatar_url} alt={user.user_metadata.full_name} />
-                      <AvatarFallback>{user.user_metadata.full_name?.charAt(0) || 'A'}</AvatarFallback>
-                    </Avatar>
-                  </Button>
-                </DropdownMenuTrigger>
-                <DropdownMenuContent className="w-56" align="end" forceMount>
-                  <DropdownMenuLabel className="font-normal">
-                    <div className="flex flex-col space-y-1">
-                      <p className="text-sm font-medium leading-none">{user.user_metadata.full_name}</p>
-                      <p className="text-xs leading-none text-muted-foreground">{user.email}</p>
-                      {user.role && (
-                        <p className="text-xs leading-none text-blue-600 capitalize pt-1 font-medium">
-                          {user.role}
-                        </p>
-                      )}
-                    </div>
-                  </DropdownMenuLabel>
-                  <DropdownMenuSeparator />
-                  
-                  {user.role === 'admin' ? (
-                    <DropdownMenuItem onClick={() => navigate('/admin/dashboard')}>
-                      <User className="mr-2 h-4 w-4" />
-                      <span>Admin Dashboard</span>
+              // User is logged in, show dropdown and role
+              <div className="flex items-center gap-2">
+                {user.role && (
+                   <span className="text-xs font-medium text-blue-600 capitalize border border-blue-200 bg-blue-50 px-2 py-1 rounded-full hidden md:inline-block">
+                     {user.role}
+                   </span>
+                )}
+                <DropdownMenu>
+                  <DropdownMenuTrigger asChild>
+                    <Button variant="ghost" className="relative h-8 w-8 rounded-full">
+                      <Avatar className="h-8 w-8">
+                        <AvatarImage src={user.user_metadata.avatar_url} alt={user.user_metadata.full_name} />
+                        <AvatarFallback>{user.user_metadata.full_name?.charAt(0) || 'A'}</AvatarFallback>
+                      </Avatar>
+                    </Button>
+                  </DropdownMenuTrigger>
+                  <DropdownMenuContent className="w-56" align="end" forceMount>
+                    <DropdownMenuLabel className="font-normal">
+                      <div className="flex flex-col space-y-1">
+                        <p className="text-sm font-medium leading-none">{user.user_metadata.full_name}</p>
+                        <p className="text-xs leading-none text-muted-foreground">{user.email}</p>
+                      </div>
+                    </DropdownMenuLabel>
+                    <DropdownMenuSeparator />
+                    
+                    {user.role === 'admin' ? (
+                      <DropdownMenuItem onClick={() => navigate('/admin/dashboard')}>
+                        <User className="mr-2 h-4 w-4" />
+                        <span>Admin Dashboard</span>
+                      </DropdownMenuItem>
+                    ) : user.role === 'retailer' ? (
+                      <DropdownMenuItem onClick={() => navigate('/retailer/dashboard')}>
+                        <User className="mr-2 h-4 w-4" />
+                        <span>Retailer Dashboard</span>
+                      </DropdownMenuItem>
+                    ) : user.role === 'wholesaler' ? (
+                      <DropdownMenuItem onClick={() => navigate('/wholesaler/dashboard')}>
+                        <User className="mr-2 h-4 w-4" />
+                        <span>Wholesaler Dashboard</span>
+                      </DropdownMenuItem>
+                    ) : (
+                      <DropdownMenuItem onClick={() => navigate('/profile')}>
+                        <User className="mr-2 h-4 w-4" />
+                        <span>Profile</span>
+                      </DropdownMenuItem>
+                    )}
+                    
+                    <DropdownMenuSeparator />
+                    <DropdownMenuItem onClick={handleLogout}>
+                      <LogOut className="mr-2 h-4 w-4" />
+                      <span>Log out</span>
                     </DropdownMenuItem>
-                  ) : user.role === 'retailer' ? (
-                    <DropdownMenuItem onClick={() => navigate('/retailer/dashboard')}>
-                      <User className="mr-2 h-4 w-4" />
-                      <span>Retailer Dashboard</span>
-                    </DropdownMenuItem>
-                  ) : user.role === 'wholesaler' ? (
-                    <DropdownMenuItem onClick={() => navigate('/wholesaler/dashboard')}>
-                      <User className="mr-2 h-4 w-4" />
-                      <span>Wholesaler Dashboard</span>
-                    </DropdownMenuItem>
-                  ) : (
-                    <DropdownMenuItem onClick={() => navigate('/profile')}>
-                      <User className="mr-2 h-4 w-4" />
-                      <span>Profile</span>
-                    </DropdownMenuItem>
-                  )}
-                  
-                  <DropdownMenuSeparator />
-                  <DropdownMenuItem onClick={handleLogout}>
-                    <LogOut className="mr-2 h-4 w-4" />
-                    <span>Log out</span>
-                  </DropdownMenuItem>
-                </DropdownMenuContent>
-              </DropdownMenu>
+                  </DropdownMenuContent>
+                </DropdownMenu>
+              </div>
             ) : (
               // User is logged out, show Login button
               <Button onClick={() => navigate('/login')}>Login</Button>
