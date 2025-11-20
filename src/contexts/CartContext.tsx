@@ -1,17 +1,17 @@
-// src/contexts/CartContext.tsx
-import { createContext, useContext, useState, useEffect, ReactNode } from 'react';
-import { supabase } from '@/lib/supabase';
+import { createContext, useContext, useState, ReactNode } from 'react';
+import { supabase } from '../lib/supabase';
 import { toast } from 'sonner';
 
 interface ProductDetails {
   name: string;
   price: number;
   images: string[];
+  description?: string;
 }
 
 interface CartItem {
   id: string;
-  product_id: string | number; // UPDATED TYPE
+  product_id: string | number;
   quantity: number;
   products: ProductDetails | null;
 }
@@ -19,7 +19,7 @@ interface CartItem {
 interface CartContextType {
   cart: CartItem[];
   cartItemCount: number;
-  addToCart: (productId: string | number, quantity?: number) => Promise<void>; // UPDATED TYPE
+  addToCart: (productId: string | number, quantity?: number) => Promise<void>;
   removeFromCart: (itemId: string) => Promise<void>;
   updateQuantity: (itemId: string, newQuantity: number) => Promise<void>;
   clearCart: () => Promise<void>;
@@ -38,35 +38,65 @@ export const useCart = () => {
 
 export const CartProvider = ({ children }: { children: ReactNode }) => {
   const [cart, setCart] = useState<CartItem[]>([]);
-  const [loading, setLoading] = useState(true);
-
-  // ... existing fetchCartItems logic ... 
-  // (omitted for brevity, it mostly handles Supabase logic which might need adjustment if you are fully switching to local, 
-  // but for adding items to cart visually, the key is the type change above)
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  const [loading, setLoading] = useState(false);
 
   const addToCart = async (productId: string | number, quantity = 1) => {
-    // For the prototype with local data, we can simulate adding to cart or just log it
-    // If you are using Supabase for cart, ensure your DB schema for cart_items accepts text for product_id
-    toast.success(`Added item ${productId} to cart (Simulation)`);
-    
-    // Simple local state update for demo purposes if DB fails or types mismatch
-    setCart(prev => {
-        const existing = prev.find(item => item.product_id === productId);
-        if (existing) {
-            return prev.map(item => item.product_id === productId ? { ...item, quantity: item.quantity + quantity } : item);
+    try {
+        // 1. Fetch the REAL product details from Supabase
+        const { data: product, error } = await supabase
+            .from('products')
+            .select('*')
+            .eq('id', productId)
+            .single();
+
+        if (error || !product) {
+            console.error("Error fetching product for cart:", error);
+            toast.error("Could not load product details.");
+            return;
         }
-        return [...prev, { 
-            id: Math.random().toString(), 
-            product_id: productId, 
-            quantity, 
-            products: { name: 'Demo Item', price: 999, images: ['/placeholder.svg'] } // specific details would need lookup
-        }];
-    });
+
+        // 2. Update Cart State
+        setCart(prev => {
+            // Check if item already exists in cart
+            const existingIndex = prev.findIndex(item => item.product_id === productId);
+            
+            if (existingIndex >= 0) {
+                // Update quantity of existing item
+                const newCart = [...prev];
+                newCart[existingIndex].quantity += quantity;
+                return newCart;
+            } else {
+                // Add new item with FETCHED details (No more Demo Item)
+                return [...prev, { 
+                    id: crypto.randomUUID(), 
+                    product_id: productId, 
+                    quantity, 
+                    products: { 
+                        name: product.name, 
+                        price: product.price, 
+                        images: product.images || ['/placeholder.svg'],
+                        description: product.description
+                    }
+                }];
+            }
+        });
+
+        // 3. Show a better notification
+        toast.success(`${product.name} added to cart`, {
+            description: `You have ${quantity} in your cart.`,
+            duration: 3000,
+        });
+
+    } catch (error) {
+        console.error("Add to cart error:", error);
+        toast.error("Failed to add item to cart.");
+    }
   };
 
   const removeFromCart = async (itemId: string) => {
       setCart(prev => prev.filter(i => i.id !== itemId));
-      toast.success('Removed from cart');
+      toast.info('Item removed from cart');
   };
 
   const updateQuantity = async (itemId: string, newQuantity: number) => {
@@ -80,7 +110,7 @@ export const CartProvider = ({ children }: { children: ReactNode }) => {
   const cartItemCount = cart.reduce((total, item) => total + item.quantity, 0);
 
   return (
-    <CartContext.Provider value={{ cart, cartItemCount, addToCart, removeFromCart, updateQuantity, clearCart, loading: false }}>
+    <CartContext.Provider value={{ cart, cartItemCount, addToCart, removeFromCart, updateQuantity, clearCart, loading }}>
       {children}
     </CartContext.Provider>
   );

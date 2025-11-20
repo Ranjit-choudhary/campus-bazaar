@@ -3,9 +3,9 @@ import { Link, useNavigate } from 'react-router-dom';
 import { Button } from './ui/button';
 import { Input } from './ui/input';
 import { Sheet, SheetContent, SheetTrigger } from './ui/sheet';
-import { Search, ShoppingCart, Menu, User, LogOut } from 'lucide-react';
-import { useCart } from '@/contexts/CartContext';
-import { supabase } from '@/lib/supabase';
+import { Search, ShoppingCart, Menu, User, LogOut, Store as StoreIcon, Package as PackageIcon } from 'lucide-react';
+import { useCart } from '../contexts/CartContext';
+import { supabase } from '../lib/supabase';
 import { Avatar, AvatarFallback, AvatarImage } from './ui/avatar';
 import {
   DropdownMenu,
@@ -15,52 +15,85 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from './ui/dropdown-menu';
-import { Skeleton } from './ui/skeleton'; // Import Skeleton for loading UI
+import { Skeleton } from './ui/skeleton';
 
 const Navbar = () => {
   const navigate = useNavigate();
   const [searchQuery, setSearchQuery] = useState('');
   const { cartItemCount } = useCart();
   const [user, setUser] = useState<any>(null);
-  const [loading, setLoading] = useState(true); // <-- ADD THIS STATE
+  const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    // We REMOVE the initial getSessionAndRole() call to prevent the race condition.
-    // onAuthStateChange fires on page load *anyway* with the cached session.
+    let mounted = true;
 
-    // Listen for auth changes and fetch role
-    const { data: authListener } = supabase.auth.onAuthStateChange(
-      async (_event, session) => {
-        try {
-          if (session?.user) {
-            // Fetch the role from the public.users table
-            const { data: userData, error: userError } = await supabase
-              .from('users')
-              .select('role')
-              .eq('id', session.user.id)
-              .single();
-            
-            if (userError) throw userError;
-            
-            // Merge the auth user data with the public user data (role)
-            setUser({ ...session.user, ...userData });
-          } else {
+    // Helper function to fetch the user's role from the database
+    const fetchUserRole = async (sessionUser: any) => {
+      try {
+        const { data: userData, error } = await supabase
+          .from('users')
+          .select('role')
+          .eq('id', sessionUser.id)
+          .single();
+        
+        if (!mounted) return;
+
+        if (error && error.code !== 'PGRST116') {
+           console.error("Error fetching role:", error);
+        }
+
+        // Merge session user with role data
+        setUser({ 
+            ...sessionUser, 
+            role: userData?.role || 'user' 
+        });
+      } catch (e) {
+        console.error("Profile fetch error", e);
+        if (mounted) setUser(sessionUser);
+      } finally {
+        if (mounted) setLoading(false);
+      }
+    };
+
+    // 1. Check session immediately on mount (Fixes reload issue)
+    const checkSession = async () => {
+      try {
+        const { data: { session } } = await supabase.auth.getSession();
+        if (session?.user) {
+          await fetchUserRole(session.user);
+        } else {
+          if (mounted) {
             setUser(null);
+            setLoading(false);
           }
-        } catch (error: any) {
-          console.error("Error fetching user role:", error.message);
-          setUser(session?.user || null); // Set user without role on error
-        } finally {
-          // This is the key: set loading to false AFTER the first auth check
+        }
+      } catch (e) {
+        if (mounted) setLoading(false);
+      }
+    };
+
+    checkSession();
+
+    // 2. Listen for auth changes (Login/Logout events)
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
+      if (session?.user) {
+        // Only fetch if we don't already have the user (prevents double fetch on mount)
+        if (!user || user.id !== session.user.id) {
+            fetchUserRole(session.user);
+        }
+      } else {
+        if (mounted) {
+          setUser(null);
           setLoading(false);
         }
       }
-    );
+    });
 
     return () => {
-      authListener.subscription.unsubscribe();
+      mounted = false;
+      subscription.unsubscribe();
     };
-  }, []); // The empty dependency array ensures this runs once
+  }, []); // Empty dependency array
 
   const handleSearch = (e: React.FormEvent) => {
     e.preventDefault();
@@ -71,6 +104,7 @@ const Navbar = () => {
 
   const handleLogout = async () => {
     await supabase.auth.signOut();
+    setUser(null);
     navigate('/');
   };
 
@@ -87,16 +121,38 @@ const Navbar = () => {
           </nav>
         </div>
 
+        {/* Mobile Menu Trigger (Simple placeholder for now) */}
+        <Sheet>
+            <SheetTrigger asChild>
+                <Button variant="ghost" size="icon" className="md:hidden mr-2">
+                    <Menu className="h-5 w-5" />
+                </Button>
+            </SheetTrigger>
+            <SheetContent side="left">
+                <nav className="flex flex-col gap-4 mt-4">
+                    <Link to="/" className="text-lg font-semibold">Home</Link>
+                    <Link to="/shop-all" className="text-lg">Shop All</Link>
+                    <Link to="/themes" className="text-lg">Themes</Link>
+                </nav>
+            </SheetContent>
+        </Sheet>
+
         <div className="flex flex-1 items-center justify-between space-x-2 md:justify-end">
           <div className="w-full flex-1 md:w-auto md:flex-none">
             <form onSubmit={handleSearch}>
               <div className="relative">
                 <Search className="absolute left-2 top-2.5 h-4 w-4 text-muted-foreground" />
-                <Input type="search" placeholder="Search products..." className="w-full pl-8 md:w-[200px] lg:w-[336px]" value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)} />
+                <Input 
+                    type="search" 
+                    placeholder="Search..." 
+                    className="w-full pl-8 md:w-[200px] lg:w-[336px]" 
+                    value={searchQuery} 
+                    onChange={(e) => setSearchQuery(e.target.value)} 
+                />
               </div>
             </form>
           </div>
-          <nav className="hidden md:flex items-center gap-2">
+          <nav className="flex items-center gap-2">
             <Button variant="ghost" size="icon" onClick={() => navigate('/cart')} className="relative">
               <ShoppingCart className="h-5 w-5" />
               {cartItemCount > 0 && (
@@ -106,15 +162,13 @@ const Navbar = () => {
               )}
             </Button>
 
-            {/* --- MODIFIED RENDER LOGIC --- */}
             {loading ? (
-              // Show a placeholder while checking auth to prevent flicker
               <Skeleton className="h-8 w-8 rounded-full" />
             ) : user ? (
-              // User is logged in, show dropdown and role
               <div className="flex items-center gap-2">
-                {user.role && (
-                   <span className="text-xs font-medium text-blue-600 capitalize border border-blue-200 bg-blue-50 px-2 py-1 rounded-full hidden md:inline-block">
+                {/* Optional: Show role badge for special users */}
+                {(user.role === 'retailer' || user.role === 'wholesaler' || user.role === 'admin') && (
+                   <span className="text-[10px] font-bold uppercase tracking-wider text-blue-600 border border-blue-200 bg-blue-50 px-2 py-0.5 rounded-full hidden md:inline-block">
                      {user.role}
                    </span>
                 )}
@@ -122,56 +176,50 @@ const Navbar = () => {
                   <DropdownMenuTrigger asChild>
                     <Button variant="ghost" className="relative h-8 w-8 rounded-full">
                       <Avatar className="h-8 w-8">
-                        <AvatarImage src={user.user_metadata.avatar_url} alt={user.user_metadata.full_name} />
-                        <AvatarFallback>{user.user_metadata.full_name?.charAt(0) || 'A'}</AvatarFallback>
+                        <AvatarImage src={user.user_metadata?.avatar_url} alt={user.user_metadata?.full_name} />
+                        <AvatarFallback>{user.user_metadata?.full_name?.charAt(0) || user.email?.charAt(0) || 'U'}</AvatarFallback>
                       </Avatar>
                     </Button>
                   </DropdownMenuTrigger>
                   <DropdownMenuContent className="w-56" align="end" forceMount>
                     <DropdownMenuLabel className="font-normal">
                       <div className="flex flex-col space-y-1">
-                        <p className="text-sm font-medium leading-none">{user.user_metadata.full_name}</p>
+                        <p className="text-sm font-medium leading-none">{user.user_metadata?.full_name}</p>
                         <p className="text-xs leading-none text-muted-foreground">{user.email}</p>
                       </div>
                     </DropdownMenuLabel>
                     <DropdownMenuSeparator />
                     
-                    {user.role === 'admin' ? (
+                    {user.role === 'admin' && (
                       <DropdownMenuItem onClick={() => navigate('/admin/dashboard')}>
-                        <User className="mr-2 h-4 w-4" />
-                        <span>Admin Dashboard</span>
+                        <User className="mr-2 h-4 w-4" /> Admin Dashboard
                       </DropdownMenuItem>
-                    ) : user.role === 'retailer' ? (
+                    )}
+                    {user.role === 'retailer' && (
                       <DropdownMenuItem onClick={() => navigate('/retailer/dashboard')}>
-                        <User className="mr-2 h-4 w-4" />
-                        <span>Retailer Dashboard</span>
+                        <StoreIcon className="mr-2 h-4 w-4" /> Retailer Dashboard
                       </DropdownMenuItem>
-                    ) : user.role === 'wholesaler' ? (
+                    )}
+                    {user.role === 'wholesaler' && (
                       <DropdownMenuItem onClick={() => navigate('/wholesaler/dashboard')}>
-                        <User className="mr-2 h-4 w-4" />
-                        <span>Wholesaler Dashboard</span>
-                      </DropdownMenuItem>
-                    ) : (
-                      <DropdownMenuItem onClick={() => navigate('/profile')}>
-                        <User className="mr-2 h-4 w-4" />
-                        <span>Profile</span>
+                        <PackageIcon className="mr-2 h-4 w-4" /> Wholesaler Dashboard
                       </DropdownMenuItem>
                     )}
                     
+                    <DropdownMenuItem onClick={() => navigate('/profile')}>
+                      <User className="mr-2 h-4 w-4" /> Profile
+                    </DropdownMenuItem>
+                    
                     <DropdownMenuSeparator />
                     <DropdownMenuItem onClick={handleLogout}>
-                      <LogOut className="mr-2 h-4 w-4" />
-                      <span>Log out</span>
+                      <LogOut className="mr-2 h-4 w-4" /> Log out
                     </DropdownMenuItem>
                   </DropdownMenuContent>
                 </DropdownMenu>
               </div>
             ) : (
-              // User is logged out, show Login button
               <Button onClick={() => navigate('/login')}>Login</Button>
             )}
-            {/* --- END MODIFICATION --- */}
-            
           </nav>
         </div>
       </div>

@@ -1,89 +1,91 @@
-// src/components/ProtectedRoute.tsx
-import { supabase } from "@/lib/supabase";
-import { useEffect, useState } from "react";
-import { Navigate, Outlet, useLocation } from "react-router-dom";
-import { toast } from "sonner";
-import { Session, User } from '@supabase/supabase-js'; // Import Supabase types
+import { supabase } from '../lib/supabase';
+import { useEffect, useState } from 'react';
+import { Navigate, Outlet, useLocation } from 'react-router-dom';
+import { toast } from 'sonner';
+import { User } from '@supabase/supabase-js';
 
 interface ProtectedRouteProps {
   role?: string;
 }
 
-// Create a combined type for our user object
 type AppUser = User & { role?: string };
 
 const ProtectedRoute = ({ role }: ProtectedRouteProps) => {
-  // We use `undefined` to mean "we haven't checked yet"
   const [appUser, setAppUser] = useState<AppUser | null | undefined>(undefined);
-  const [loading, setLoading] = useState(true);
   const location = useLocation();
 
   useEffect(() => {
-    // This listener is the single source of truth.
-    // It fires once on page load and again on any auth change.
-    const { data: authListener } = supabase.auth.onAuthStateChange(
-      async (_event, session) => {
-        try {
-          if (session?.user) {
-            // User is logged in, now get their role from public.users
-            const { data: userData, error: userError } = await supabase
-              .from('users') // This queries 'public.users'
-              .select('role')
-              .eq('id', session.user.id)
-              .single();
+    let mounted = true;
 
-            if (userError) throw userError;
-
-            if (userData) {
-              // We have the session AND the role
-              setAppUser({ ...session.user, ...userData });
-            } else {
-              // This is a problem: user is auth'd but has no row in public.users
-              // This shouldn't happen with the trigger, but we must handle it.
-              console.error("Auth Error: User exists in auth but not in public.users.");
-              toast.error("User profile is missing. Please contact support.");
-              setAppUser(session.user); // Set user without role
-            }
-          } else {
-            // User is logged out
-            setAppUser(null);
-          }
-        } catch (e: any) {
-            console.error("Error in auth listener:", e.message);
-            toast.error("An error occurred checking your permissions.");
-            setAppUser(null); // Log them out on error
-        } finally {
-            // THIS IS THE FIX:
-            // After the first check (on page load), we are no longer loading.
-            setLoading(false);
+    const checkAuth = async () => {
+      try {
+        // 1. Check Session Directly first (Faster on reload)
+        const { data: { session } } = await supabase.auth.getSession();
+        
+        if (!session?.user) {
+          if (mounted) setAppUser(null);
+          return;
         }
+
+        // 2. Fetch Role
+        const { data: userData, error } = await supabase
+          .from('users')
+          .select('role')
+          .eq('id', session.user.id)
+          .single();
+        
+        if (error && error.code !== 'PGRST116') {
+           console.error("Error checking role:", error);
+        }
+
+        if (mounted) {
+           // Combine auth user with role data
+           setAppUser({ ...session.user, role: userData?.role });
+        }
+
+      } catch (error) {
+        console.error("Auth check failed:", error);
+        if (mounted) setAppUser(null);
       }
-    );
+    };
+
+    checkAuth();
+
+    // 3. Also listen for changes (Sign out, etc)
+    const { data: authListener } = supabase.auth.onAuthStateChange((_event, session) => {
+       if (!session) {
+           if (mounted) setAppUser(null);
+       }
+    });
 
     return () => {
-      // Cleanup the listener on component unmount
+      mounted = false;
       authListener.subscription.unsubscribe();
     };
-  }, []); // The empty array ensures this effect runs only once on mount
+  }, []);
 
-  // --- Render Logic ---
-
-  if (loading) {
-    return <div>Loading...</div>; // Show loading screen ONLY while the listener runs for the first time
+  // Loading state (undefined means we haven't finished checking)
+  if (appUser === undefined) {
+    return (
+        <div className="h-screen w-full flex items-center justify-center">
+            <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary"></div>
+        </div>
+    );
   }
 
-  // If loading is done and there's no user, redirect to login
-  if (!appUser) {
-    return <Navigate to="/admin/login" state={{ from: location }} replace />;
+  // Not logged in
+  if (appUser === null) {
+    return <Navigate to="/login" state={{ from: location }} replace />;
   }
 
-  // If a role is required and the user's role doesn't match, redirect
-  if (role && appUser?.role !== role) {
-    toast.error("Access Denied: You do not have permission to view this page.");
+  // Logged in but wrong role
+  if (role && appUser.role !== role) {
+    // Prevent toast spam if possible, or accept it shows once on redirect
+    // setTimeout(() => toast.error("Access Denied: Insufficient permissions."), 0);
     return <Navigate to="/" replace />;
   }
 
-  // If all checks pass, render the child component (e.g., AdminDashboard)
+  // Authorized
   return <Outlet />;
 };
 
