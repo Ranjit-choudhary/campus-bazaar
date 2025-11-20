@@ -1,13 +1,14 @@
 import { useEffect, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
-import { toast } from 'sonner';
 import Navbar from '@/components/Navbar';
 import ProductCard from '@/components/ProductCard';
 import ThemeCard from '@/components/ThemeCard';
 import { Button } from '@/components/ui/button';
 import { Search } from 'lucide-react';
-import { supabase } from '@/lib/supabase';
 import { useCart } from '@/contexts/CartContext';
+// IMPORT LOCAL DATA
+import { products as localProducts, getRetailerById } from '@/data/products';
+import { themes as localThemes } from '@/data/themes';
 
 const SearchResults = () => {
   const navigate = useNavigate();
@@ -18,27 +19,27 @@ const SearchResults = () => {
   const { addToCart } = useCart();
 
   useEffect(() => {
-    const performSearch = async () => {
-        if (query.trim()) {
-            // Search for products
-            const { data: products } = await supabase
-                .from('products')
-                .select()
-                .textSearch('fts', query.trim());
-            setProductResults(products || []);
+    // Local search implementation
+    if (query.trim()) {
+        const lowerQuery = query.toLowerCase();
+        
+        // Search products
+        const foundProducts = localProducts.filter(p => 
+            p.name.toLowerCase().includes(lowerQuery) || 
+            p.description.toLowerCase().includes(lowerQuery)
+        );
+        setProductResults(foundProducts);
 
-            // Search for themes
-            const { data: themes } = await supabase
-                .from('themes')
-                .select()
-                .textSearch('fts', query.trim());
-            setThemeResults(themes || []);
-        } else {
-            setProductResults([]);
-            setThemeResults([]);
-        }
+        // Search themes
+        const foundThemes = localThemes.filter(t => 
+            t.name.toLowerCase().includes(lowerQuery) || 
+            t.description.toLowerCase().includes(lowerQuery)
+        );
+        setThemeResults(foundThemes);
+    } else {
+        setProductResults([]);
+        setThemeResults([]);
     }
-    performSearch();
   }, [query]);
 
   const totalResults = productResults.length + themeResults.length;
@@ -80,6 +81,7 @@ const SearchResults = () => {
                   key={theme.id}
                   title={theme.name}
                   image={theme.image}
+                  tag={theme.category}
                   onClick={() => navigate(`/theme/${theme.id}`)}
                 />
               ))}
@@ -92,16 +94,21 @@ const SearchResults = () => {
           <div>
             <h2 className="text-2xl font-bold text-foreground mb-4">Products</h2>
             <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-6">
-              {productResults.map((product) => (
-                <ProductCard
-                  key={product.id}
-                  id={product.id}
-                  name={product.name}
-                  price={product.price}
-                  image={product.images[0]}
-                  onAddToCart={() => addToCart(product.id)}
-                />
-              ))}
+              {productResults.map((product) => {
+                const retailer = getRetailerById(product.retailerId);
+                return (
+                    <ProductCard
+                    key={product.id}
+                    id={product.id}
+                    name={product.name}
+                    price={product.price}
+                    image={product.images && product.images.length > 0 ? product.images[0] : '/placeholder.svg'}
+                    retailerName={retailer ? retailer.name : 'Unknown Seller'}
+                    stock={product.stock}
+                    onAddToCart={() => addToCart(product.id)}
+                    />
+                );
+              })}
             </div>
           </div>
         )}

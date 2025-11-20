@@ -5,7 +5,7 @@ import { supabase } from '@/lib/supabase';
 import { useCart } from '@/contexts/CartContext';
 import Navbar from '@/components/Navbar';
 import { Button } from '@/components/ui/button';
-import { ArrowLeft, ShoppingCart, Send } from 'lucide-react';
+import { ArrowLeft, ShoppingCart, Send, Package, Store, Star } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Textarea } from '@/components/ui/textarea';
 import { Label } from '@/components/ui/label';
@@ -14,21 +14,17 @@ import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
 import { Separator } from '@/components/ui/separator';
 
-// New Interface for Feedback
+// Interface for Feedback matching Supabase table
 interface Feedback {
   id: string;
   user_id: string;
-  product_id: number;
+  product_id: string;
   type: 'feedback' | 'query';
   content: string;
+  rating?: number;
   created_at: string;
-  // This nested property will now be null due to the simplified fetch
-  users: {
-    raw_user_meta_data: {
-        full_name?: string;
-        user_name?: string;
-    } | null;
-  } | null;
+  // We will fetch user email/metadata if possible, or fallback
+  user_email?: string;
 }
 
 const ProductDetailPage = () => {
@@ -38,32 +34,28 @@ const ProductDetailPage = () => {
   const [product, setProduct] = useState<any>(null);
   const [loading, setLoading] = useState(true);
   const [selectedImage, setSelectedImage] = useState<string | null>(null);
+  const [retailer, setRetailer] = useState<any>(null);
 
-  // New state for Feedback/Queries
+  // Feedback State
   const [feedbackList, setFeedbackList] = useState<Feedback[]>([]);
   const [newFeedbackType, setNewFeedbackType] = useState<'feedback' | 'query'>('feedback');
   const [newFeedbackContent, setNewFeedbackContent] = useState('');
+  const [newRating, setNewRating] = useState<number>(5);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [user, setUser] = useState<any>(null);
 
-
-  const fetchFeedback = async (id: number) => {
-    // FIX: Simplified the select statement by removing the join.
-    // This bypasses potential RLS issues with the auth.users table on read.
+  // Function to fetch feedback from Supabase
+  const fetchFeedback = async (prodId: string) => {
     const { data, error } = await supabase
       .from('product_feedback')
-      .select(`
-        id, product_id, user_id, type, content, created_at
-      `)
-      .eq('product_id', id)
+      .select('*')
+      .eq('product_id', prodId)
       .order('created_at', { ascending: false });
-    // END FIX
 
     if (error) {
       console.error('Error fetching feedback:', error);
     } else {
-      // NOTE: We cast the result, knowing 'users' property will be missing/null.
-      setFeedbackList(data as unknown as Feedback[]);
+      setFeedbackList(data || []);
     }
   };
 
@@ -72,30 +64,42 @@ const ProductDetailPage = () => {
       if (!productId) return;
       setLoading(true);
 
-      // 1. Fetch Product
-      const { data: productData, error: productError } = await supabase
+      // 1. Fetch Product & Retailer from Supabase
+      const { data: foundProduct, error } = await supabase
         .from('products')
-        .select('*')
+        .select(`
+            *,
+            retailers (
+                name,
+                rating,
+                description
+            )
+        `)
         .eq('id', productId)
         .single();
 
-      if (productError || !productData) {
-        console.error('Error fetching product:', productError);
-        navigate('/not-found');
+      if (error || !foundProduct) {
+        console.error('Error fetching product:', error);
+        // navigate('/not-found'); // Optional: redirect on error
         setLoading(false);
         return;
       }
-      setProduct(productData);
-      if (productData.images && productData.images.length > 0) {
-        setSelectedImage(productData.images[0]);
+      
+      setProduct(foundProduct);
+      if (foundProduct.images && foundProduct.images.length > 0) {
+        setSelectedImage(foundProduct.images[0]);
       }
 
-      // 2. Fetch User (for submission logic)
-      const { data: { user: currentUser } } = await supabase.auth.getUser();
-      setUser(currentUser);
+      if (foundProduct.retailers) {
+          setRetailer(foundProduct.retailers);
+      }
+
+      // 2. Fetch User Session
+      const { data: { session } } = await supabase.auth.getSession();
+      setUser(session?.user || null);
       
-      // 3. Fetch Feedback
-      await fetchFeedback(productData.id);
+      // 3. Fetch Real Feedback
+      await fetchFeedback(foundProduct.id);
 
       setLoading(false);
     };
@@ -105,7 +109,7 @@ const ProductDetailPage = () => {
   const handleSubmitFeedback = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!user) {
-      toast.error('You must be logged in to submit feedback or queries.');
+      toast.error('You must be logged in to submit feedback.');
       navigate('/login');
       return;
     }
@@ -116,22 +120,30 @@ const ProductDetailPage = () => {
 
     setIsSubmitting(true);
     
+    // Insert into Supabase
     const { error } = await supabase
       .from('product_feedback')
       .insert({
-        product_id: product.id,
         user_id: user.id,
+        product_id: product.id,
         type: newFeedbackType,
         content: newFeedbackContent.trim(),
+        rating: newFeedbackType === 'feedback' ? newRating : null,
       });
 
     if (error) {
-      console.error('Error submitting feedback:', error);
-      toast.error('Failed to submit. Please try again.');
+      console.error("Submission error:", error);
+      if (error.code === '23505') { // Unique violation code
+          toast.error("You have already submitted feedback for this product.");
+      } else {
+          toast.error("Failed to submit. Please try again.");
+      }
     } else {
       toast.success(`${newFeedbackType === 'feedback' ? 'Feedback' : 'Query'} submitted successfully!`);
       setNewFeedbackContent('');
-      fetchFeedback(product.id); // Refresh the list
+      setNewRating(5);
+      // Refresh feedback list
+      await fetchFeedback(product.id);
     }
     setIsSubmitting(false);
   };
@@ -151,30 +163,32 @@ const ProductDetailPage = () => {
     return null;
   }
 
-  // Helper to format date and time
   const formatTime = (isoString: string) => {
     return new Date(isoString).toLocaleString('en-IN', {
       year: 'numeric',
       month: 'short',
       day: 'numeric',
-      hour: '2-digit',
-      minute: '2-digit',
     });
   }
   
-  // Helper to get display name (now relies on fallback since the join is removed)
-  const getDisplayName = (feedbackItem: Feedback) => {
-      const rawMetadata = feedbackItem.users?.raw_user_meta_data;
-      const userName = rawMetadata?.full_name || rawMetadata?.user_name;
-      
-      if (userName) {
-          return userName;
-      }
+  // Calculate Average Rating from fetched data
+  const ratings = feedbackList
+    .filter(f => f.type === 'feedback' && f.rating)
+    .map(f => f.rating as number);
+    
+  const averageRating = ratings.length > 0 
+    ? (ratings.reduce((a, b) => a + b, 0) / ratings.length).toFixed(1) 
+    : null;
 
-      // Fallback to truncated user ID
-      return feedbackItem.user_id ? `User ${feedbackItem.user_id.substring(0, 8)}` : 'Anonymous';
+  // Stock Status Logic
+  let stockStatus = null;
+  if (product.stock === 0) {
+      stockStatus = <span className="text-destructive font-semibold flex items-center gap-2"><Package className="h-4 w-4"/> Out of Stock</span>;
+  } else if (product.stock < 10) {
+      stockStatus = <span className="text-orange-600 font-semibold flex items-center gap-2"><Package className="h-4 w-4"/> Only {product.stock} left in stock - order soon.</span>;
+  } else {
+      stockStatus = <span className="text-green-600 font-semibold flex items-center gap-2"><Package className="h-4 w-4"/> In Stock ({product.stock} units)</span>;
   }
-
 
   return (
     <div className="min-h-screen bg-background">
@@ -189,12 +203,12 @@ const ProductDetailPage = () => {
         <div className="grid grid-cols-1 md:grid-cols-2 gap-8 lg:gap-12 mb-12">
           {/* Product Images Gallery */}
           <div>
-            <Card className="overflow-hidden">
+            <Card className="overflow-hidden border-none shadow-none">
               <CardContent className="p-0">
                 <img 
                   src={selectedImage || '/placeholder.svg'} 
                   alt={product.name}
-                  className="w-full h-auto max-h-[500px] object-cover rounded-t-lg"
+                  className="w-full h-auto max-h-[500px] object-cover rounded-lg shadow-md"
                 />
               </CardContent>
             </Card>
@@ -217,24 +231,63 @@ const ProductDetailPage = () => {
 
           {/* Product Details */}
           <div className="flex flex-col">
-            <h1 className="text-4xl font-bold text-foreground mb-4">{product.name}</h1>
-            <p className="text-3xl font-semibold text-primary mb-6">₹{product.price}</p>
-            <p className="text-muted-foreground mb-6 flex-grow">{product.description}</p>
+            <h1 className="text-4xl font-bold text-foreground mb-2">{product.name}</h1>
             
-            <div className="flex items-center gap-4">
-              <Button size="lg" onClick={() => addToCart(product.id)}>
+            {/* Retailer Info */}
+            {retailer && (
+                <div className="flex items-center gap-2 text-sm text-muted-foreground mb-4">
+                    <Store className="h-4 w-4" />
+                    <span>Sold by <span className="font-semibold text-foreground hover:underline cursor-pointer">{retailer.name}</span></span>
+                    <span className="text-yellow-500 flex items-center gap-1">★ {retailer.rating}</span>
+                </div>
+            )}
+
+            {/* Product Rating Display */}
+            <div className="flex items-center gap-2 mb-6">
+                {averageRating ? (
+                    <>
+                        <div className="flex text-yellow-500">
+                            {[...Array(5)].map((_, i) => (
+                                <Star key={i} className={cn("h-5 w-5", i < Math.round(Number(averageRating)) ? "fill-current" : "text-muted-foreground/30")} />
+                            ))}
+                        </div>
+                        <span className="text-lg font-medium">{averageRating}</span>
+                        <span className="text-muted-foreground text-sm">({ratings.length} ratings)</span>
+                    </>
+                ) : (
+                    <span className="text-muted-foreground text-sm">No ratings yet</span>
+                )}
+            </div>
+
+            <Separator className="mb-6" />
+
+            <p className="text-3xl font-semibold text-primary mb-4">₹{product.price}</p>
+            
+            {/* Stock Status Display */}
+            <div className="mb-6">
+                {stockStatus}
+            </div>
+
+            <p className="text-muted-foreground mb-8 flex-grow text-lg leading-relaxed">{product.description}</p>
+            
+            <div className="flex items-center gap-4 mt-auto">
+              <Button 
+                size="lg" 
+                className="w-full md:w-auto text-lg py-6" 
+                onClick={() => addToCart(product.id)}
+                disabled={product.stock === 0}
+              >
                 <ShoppingCart className="mr-2 h-5 w-5" />
-                Add to Cart
+                {product.stock === 0 ? 'Notify Me' : 'Add to Cart'}
               </Button>
             </div>
           </div>
         </div>
 
-        {/* --- Visual Break --- */}
         <Separator className="my-12" />
 
         {/* Feedback and Queries Section */}
-        <div className="mt-8">
+        <div className="mt-8 max-w-4xl">
           <h2 className="text-3xl font-bold text-foreground mb-6">Feedback & Queries</h2>
           
           <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
@@ -242,7 +295,7 @@ const ProductDetailPage = () => {
             <div className="lg:col-span-1">
               <Card>
                 <CardHeader>
-                  <CardTitle className="text-xl">Submit Yours</CardTitle>
+                  <CardTitle className="text-xl">Ask or Review</CardTitle>
                 </CardHeader>
                 <CardContent>
                   <form onSubmit={handleSubmitFeedback} className="space-y-4">
@@ -256,11 +309,32 @@ const ProductDetailPage = () => {
                           <SelectValue placeholder="Select type" />
                         </SelectTrigger>
                         <SelectContent>
-                          <SelectItem value="feedback">Feedback</SelectItem>
-                          <SelectItem value="query">Query</SelectItem>
+                          <SelectItem value="feedback">Feedback (Review)</SelectItem>
+                          <SelectItem value="query">Query (Question)</SelectItem>
                         </SelectContent>
                       </Select>
                     </div>
+
+                    {newFeedbackType === 'feedback' && (
+                        <div>
+                            <Label className="mb-2 block">Rating</Label>
+                            <div className="flex gap-1">
+                                {[1, 2, 3, 4, 5].map((star) => (
+                                    <button
+                                        key={star}
+                                        type="button"
+                                        onClick={() => setNewRating(star)}
+                                        className={cn(
+                                            "p-1 transition-colors",
+                                            star <= newRating ? "text-yellow-500" : "text-muted-foreground"
+                                        )}
+                                    >
+                                        <Star className={cn("h-6 w-6", star <= newRating && "fill-current")} />
+                                    </button>
+                                ))}
+                            </div>
+                        </div>
+                    )}
                     
                     <div>
                       <Label htmlFor="content">Content</Label>
@@ -268,19 +342,17 @@ const ProductDetailPage = () => {
                         id="content"
                         value={newFeedbackContent}
                         onChange={(e) => setNewFeedbackContent(e.target.value)}
-                        placeholder="Share your thoughts or ask a question..."
+                        placeholder={newFeedbackType === 'feedback' ? "Share your experience..." : "Ask a question..."}
                         required
                         className="min-h-[100px]"
                       />
                     </div>
                     
-                    <Button type="submit" className="w-full" disabled={isSubmitting || !user}>
+                    <Button type="submit" className="w-full" disabled={isSubmitting}>
                       <Send className="mr-2 h-4 w-4" />
                       {isSubmitting ? 'Submitting...' : 'Submit'}
                     </Button>
-                    {!user && (
-                        <p className="text-sm text-center text-red-500">You must be logged in to submit.</p>
-                    )}
+                    {!user && <p className="text-xs text-red-500 mt-2">You must log in to post.</p>}
                   </form>
                 </CardContent>
               </Card>
@@ -292,28 +364,39 @@ const ProductDetailPage = () => {
                 feedbackList.map((item) => (
                   <Card key={item.id}>
                     <CardContent className="p-4">
-                        <div className="flex justify-between items-center mb-2">
-                            <span className={cn(
-                                "font-semibold capitalize",
-                                item.type === 'query' ? 'text-orange-500' : 'text-green-600'
-                            )}>
-                                {item.type}:
-                            </span>
+                        <div className="flex justify-between items-start mb-2">
+                            <div className="flex items-center gap-2">
+                                <span className={cn(
+                                    "font-semibold capitalize px-2 py-0.5 rounded text-xs",
+                                    item.type === 'query' ? 'bg-orange-100 text-orange-700' : 'bg-green-100 text-green-700'
+                                )}>
+                                    {item.type}
+                                </span>
+                                {item.type === 'feedback' && item.rating && (
+                                    <div className="flex text-yellow-500">
+                                        {[...Array(5)].map((_, i) => (
+                                            <Star key={i} className={cn("h-3 w-3", i < item.rating! ? "fill-current" : "text-muted-foreground/30")} />
+                                        ))}
+                                    </div>
+                                )}
+                            </div>
                             <span className="text-xs text-muted-foreground">
                                 {formatTime(item.created_at)}
                             </span>
                         </div>
                         <p className="text-sm text-foreground mb-3">{item.content}</p>
-                        {/* Now using the fallback logic to display the user ID or 'Anonymous' */}
-                        <div className="text-right text-xs text-muted-foreground">
-                            — Submitted by {getDisplayName(item)}
+                        <div className="text-right text-xs text-muted-foreground font-medium">
+                            {/* Displaying truncated User ID as privacy fallback */}
+                            — User {item.user_id.substring(0, 6)}...
                         </div>
                     </CardContent>
                   </Card>
                 ))
               ) : (
-                <Card><CardContent className="p-6 text-center text-muted-foreground">
-                    Be the first to leave a feedback or ask a query!
+                <Card className="bg-muted/30 border-dashed">
+                    <CardContent className="p-12 text-center text-muted-foreground">
+                    <p>No feedback or queries yet.</p>
+                    <p className="text-sm">Be the first to review this product!</p>
                 </CardContent></Card>
               )}
             </div>

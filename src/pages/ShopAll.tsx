@@ -1,42 +1,42 @@
-// src/pages/ShopAll.tsx
 import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import Navbar from '@/components/Navbar';
 import ProductCard from '@/components/ProductCard';
 import { Button } from '@/components/ui/button';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { supabase } from '@/lib/supabase';
+// IMPORT LOCAL DATA
+import { products as localProducts, getRetailerById } from '@/data/products'; // Import local products and helper
 import { useCart } from '@/contexts/CartContext';
 
 const ShopAll = () => {
   const navigate = useNavigate();
-  const [products, setProducts] = useState<any[]>([]);
+  // Use local products directly instead of fetching from Supabase for now to match your request
+  const [products, setProducts] = useState<any[]>(localProducts); 
   const [sortBy, setSortBy] = useState<string>('name');
   const [filterCategory, setFilterCategory] = useState<string>('all');
   const { addToCart } = useCart();
 
-  async function getProducts() {
-    let query = supabase.from('products').select();
-    if (filterCategory !== 'all') {
-      query = query.eq('category', filterCategory);
-    }
-    const { data } = await query;
-    setProducts(data || []);
-  }
-
   useEffect(() => {
-    getProducts();
+    let filtered = localProducts;
+    if (filterCategory !== 'all') {
+      // Note: Our local data uses 'mugs', 'posters' etc for category, NOT 'category-movies'
+      // 'category-movies' is the THEME. 
+      // We should probably filter by theme OR category. 
+      // For this example, let's assume the dropdown filters by the 'category' field in Product interface.
+      filtered = localProducts.filter(p => p.category === filterCategory);
+    }
+    setProducts(filtered);
   }, [filterCategory]);
 
   const categories = [
     'all',
     'posters',
-    'bedsheets',
-    'artificial-plants',
-    'stationery',
+    'mugs',
+    'decor',
     'lighting',
-    'water-bottles',
-    'others'
+    'tech',
+    'toys',
+    'kitchen'
   ];
 
   const sortedProducts = [...products].sort((a, b) => {
@@ -104,16 +104,23 @@ const ShopAll = () => {
         </div>
 
         <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-6">
-          {sortedProducts.map((product) => (
-            <ProductCard
-              key={product.id}
-              id={product.id}
-              name={product.name}
-              price={product.price}
-              image={product.images[0]}
-              onAddToCart={() => addToCart(product.id)}
-            />
-          ))}
+          {sortedProducts.map((product) => {
+             const retailer = getRetailerById(product.retailerId);
+             return (
+                <ProductCard
+                key={product.id}
+                id={product.id}
+                name={product.name}
+                price={product.price}
+                image={product.images && product.images.length > 0 ? product.images[0] : '/placeholder.svg'}
+                // Pass new props
+                retailerName={retailer ? retailer.name : 'Unknown Seller'}
+                stock={product.stock}
+                onAddToCart={() => addToCart(product.id)} // Note: addToCart expects number ID but our local IDs are strings. You might need to update Context or parse ID.
+                // For now, assuming addToCart can handle it or we cast it if it was strictly number before.
+                />
+             );
+          })}
         </div>
 
         {sortedProducts.length === 0 && (

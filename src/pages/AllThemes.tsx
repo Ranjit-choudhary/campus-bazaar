@@ -1,33 +1,19 @@
-import { useState, useEffect } from 'react';
+// src/pages/AllThemes.tsx
+import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import Navbar from '@/components/Navbar';
 import ThemeCard from '@/components/ThemeCard';
-import { supabase } from '@/lib/supabase';
 import { Button } from '@/components/ui/button';
-import { ArrowLeft, ChevronLeft, ChevronRight } from 'lucide-react';
-import { Pagination, PaginationContent, PaginationItem, PaginationPrevious, PaginationNext, PaginationLink, PaginationEllipsis } from '@/components/ui/pagination';
+import { ArrowLeft } from 'lucide-react';
+import { Pagination, PaginationContent, PaginationItem, PaginationPrevious, PaginationNext, PaginationLink } from '@/components/ui/pagination';
+// IMPORT LOCAL DATA
+import { themes } from '@/data/themes';
 
-const ITEMS_PER_PAGE = 6; // Set to 6 items per page
+const ITEMS_PER_PAGE = 6;
 
 const AllThemes = () => {
   const navigate = useNavigate();
-  const [themes, setThemes] = useState<any[]>([]);
-  const [loading, setLoading] = useState(true);
   const [currentPage, setCurrentPage] = useState(1);
-
-  useEffect(() => {
-    const fetchThemes = async () => {
-      // Fetch all themes to handle local pagination
-      const { data, error } = await supabase.from('themes').select('*');
-      if (error) {
-        console.error('Error fetching themes:', error);
-      } else {
-        setThemes(data || []);
-      }
-      setLoading(false);
-    };
-    fetchThemes();
-  }, []);
 
   const handleThemeClick = (themeId: string) => {
     navigate(`/theme/${themeId}`);
@@ -74,62 +60,57 @@ const AllThemes = () => {
             </Button>
         </div>
 
-        {loading ? (
-          <p>Loading themes...</p>
-        ) : (
-          <>
-            {/* Theme Grid (showing only current page themes) */}
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-              {currentThemes.map((theme) => (
-                <ThemeCard
-                  key={theme.id}
-                  title={theme.name}
-                  image={theme.image}
-                  onClick={() => handleThemeClick(theme.id)}
-                />
-              ))}
-            </div>
+        {/* Theme Grid */}
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+          {currentThemes.map((theme) => (
+            <ThemeCard
+              key={theme.id}
+              title={theme.name}
+              image={theme.image}
+              // Pass the category as the tag so it appears on the card
+              tag={theme.category}
+              onClick={() => handleThemeClick(theme.id)}
+            />
+          ))}
+        </div>
 
-            {/* Pagination Controls */}
-            {totalPages > 1 && (
-                <div className="mt-12">
-                    <Pagination>
-                        <PaginationContent>
-                            <PaginationItem>
-                                <PaginationPrevious 
-                                    onClick={goToPreviousPage} 
-                                    aria-disabled={currentPage === 1}
-                                    className={currentPage === 1 ? 'pointer-events-none opacity-50' : ''}
-                                />
-                            </PaginationItem>
-                            
-                            {/* Dynamically generated Page Number Buttons */}
-                            {[...Array(totalPages)].map((_, index) => {
-                                const page = index + 1;
-                                return (
-                                    <PaginationItem key={page}>
-                                        <PaginationLink
-                                            isActive={page === currentPage}
-                                            onClick={() => setPageAndScroll(page)}
-                                        >
-                                            {page}
-                                        </PaginationLink>
-                                    </PaginationItem>
-                                );
-                            })}
-                            
-                            <PaginationItem>
-                                <PaginationNext 
-                                    onClick={goToNextPage} 
-                                    aria-disabled={currentPage === totalPages}
-                                    className={currentPage === totalPages ? 'pointer-events-none opacity-50' : ''}
-                                />
-                            </PaginationItem>
-                        </PaginationContent>
-                    </Pagination>
-                </div>
-            )}
-          </>
+        {/* Pagination Controls */}
+        {totalPages > 1 && (
+            <div className="mt-12">
+                <Pagination>
+                    <PaginationContent>
+                        <PaginationItem>
+                            <PaginationPrevious 
+                                onClick={goToPreviousPage} 
+                                aria-disabled={currentPage === 1}
+                                className={currentPage === 1 ? 'pointer-events-none opacity-50' : ''}
+                            />
+                        </PaginationItem>
+                        
+                        {[...Array(totalPages)].map((_, index) => {
+                            const page = index + 1;
+                            return (
+                                <PaginationItem key={page}>
+                                    <PaginationLink
+                                        isActive={page === currentPage}
+                                        onClick={() => setPageAndScroll(page)}
+                                    >
+                                        {page}
+                                    </PaginationLink>
+                                </PaginationItem>
+                            );
+                        })}
+                        
+                        <PaginationItem>
+                            <PaginationNext 
+                                onClick={goToNextPage} 
+                                aria-disabled={currentPage === totalPages}
+                                className={currentPage === totalPages ? 'pointer-events-none opacity-50' : ''}
+                            />
+                        </PaginationItem>
+                    </PaginationContent>
+                </Pagination>
+            </div>
         )}
       </div>
     </div>

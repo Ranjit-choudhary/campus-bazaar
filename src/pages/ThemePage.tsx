@@ -1,12 +1,14 @@
+// src/pages/ThemePage.tsx
 import { useParams, useNavigate } from 'react-router-dom';
 import { useEffect, useState } from 'react';
-import { toast } from 'sonner';
 import Navbar from '@/components/Navbar';
 import ProductCard from '@/components/ProductCard';
 import { Button } from '@/components/ui/button';
 import { ArrowLeft } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
-import { useCart } from '@/contexts/CartContext'; // Added this line
+import { useCart } from '@/contexts/CartContext';
+// IMPORT LOCAL DATA HELPER
+import { getThemeById } from '@/data/themes';
 
 const ThemePage = () => {
   const { themeId } = useParams<{ themeId: string }>();
@@ -18,21 +20,29 @@ const ThemePage = () => {
   useEffect(() => {
     const fetchThemeAndProducts = async () => {
       if (themeId) {
-        // Fetch theme details
-        const { data: themeData, error: themeError } = await supabase
-          .from('themes')
-          .select('*')
-          .eq('id', themeId)
-          .single();
+        // 1. Try to find theme in local data first
+        const localTheme = getThemeById(themeId);
+        
+        if (localTheme) {
+           // Use local data
+           setTheme(localTheme);
+        } else {
+           // Fallback to Supabase if not found locally
+           const { data: themeData, error: themeError } = await supabase
+             .from('themes')
+             .select('*')
+             .eq('id', themeId)
+             .single();
 
-        if (themeError || !themeData) {
-          console.error('Error fetching theme:', themeError);
-          navigate('/');
-          return;
+           if (themeError || !themeData) {
+             console.error('Error fetching theme:', themeError);
+             navigate('/');
+             return;
+           }
+           setTheme(themeData);
         }
-        setTheme(themeData);
 
-        // Fetch products for the theme
+        // 2. Fetch products (Keep fetching from Supabase, will show empty if none match)
         const { data: productsData, error: productsError } = await supabase
           .from('products')
           .select('*')
@@ -48,6 +58,34 @@ const ThemePage = () => {
 
     fetchThemeAndProducts();
   }, [themeId, navigate]);
+
+  useEffect(() => {
+    if (theme) {
+        document.body.style.background = theme.background_color || theme.backgroundColor || 'hsl(var(--background))';
+        
+        if (theme.background_color || theme.backgroundColor) {
+          const watermark = document.createElement('div');
+          watermark.id = 'theme-watermark';
+          watermark.style.position = 'fixed';
+          watermark.style.top = '0';
+          watermark.style.left = '0';
+          watermark.style.width = '100%';
+          watermark.style.height = '100%';
+          watermark.style.background = theme.background_color || theme.backgroundColor;
+          watermark.style.zIndex = '-1';
+          watermark.style.pointerEvents = 'none';
+          document.body.appendChild(watermark);
+        }
+    }
+
+    return () => {
+      document.body.style.background = '';
+      const watermark = document.getElementById('theme-watermark');
+      if (watermark) {
+        document.body.removeChild(watermark);
+      }
+    };
+  }, [theme]);
 
   if (!theme) {
     return (
@@ -66,18 +104,18 @@ const ThemePage = () => {
       {/* Theme Header */}
       <div 
         className="relative bg-cover bg-center bg-no-repeat"
-        style={{ backgroundImage: `url(${theme.header_image || ''})` }}
+        style={{ backgroundImage: `url(${theme.header_image || theme.image || ''})` }}
       >
         <div className="absolute inset-0 bg-black/50 backdrop-blur-sm" />
         <div className="relative container mx-auto px-4 py-12">
           <Button 
-    variant="ghost" 
-    onClick={() => navigate('/')}
-    className="mb-6 text-white hover:bg-white/10 focus-visible:text-white"
->
-    <ArrowLeft className="mr-2 h-4 w-4" />
-    Back to Home
-</Button>
+            variant="ghost" 
+            onClick={() => navigate('/')}
+            className="mb-6 text-white hover:bg-white/10 focus-visible:text-white"
+          >
+              <ArrowLeft className="mr-2 h-4 w-4" />
+              Back to Home
+          </Button>
           
           <div className="text-center text-white">
             <h1 className="text-5xl font-bold mb-4">{theme.name}</h1>
@@ -103,7 +141,7 @@ const ThemePage = () => {
                     id={product.id}
                     name={product.name}
                     price={product.price}
-                    image={product.images[0]}
+                    image={product.images?.[0] || '/placeholder.svg'}
                     onAddToCart={() => addToCart(product.id)}
                   />
                 ))}
@@ -117,7 +155,7 @@ const ThemePage = () => {
               <p className="text-muted-foreground mb-8">
                 We're working on adding amazing {theme.name} themed products. Check back soon!
               </p>
-              <Button onClick={() => navigate('/')}>
+              <Button onClick={() => navigate('/themes')}>
                 Explore Other Themes
               </Button>
             </div>
