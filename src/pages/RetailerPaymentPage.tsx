@@ -38,7 +38,6 @@ const RetailerPaymentPage = () => {
     const [isProcessing, setIsProcessing] = useState(false);
     const [isSuccess, setIsSuccess] = useState(false);
     
-    // Get order details passed from dashboard
     const orderDetails = location.state as OrderDetails;
 
     useEffect(() => {
@@ -52,17 +51,30 @@ const RetailerPaymentPage = () => {
 
     const { product, wholesaler, retailer, quantity } = orderDetails;
     const subtotal = product.price * quantity;
-    const shipping = 500; // Flat shipping rate for demo
-    const tax = subtotal * 0.18; // 18% GST
+    const shipping = 500; 
+    const tax = subtotal * 0.18;
     const total = subtotal + shipping + tax;
 
     const handlePayment = async () => {
         setIsProcessing(true);
         
-        // Simulate Payment Gateway Delay
+        // 1. Check Wholesaler Stock
+        // We need to fetch the specific row that belongs to the wholesaler to check THEIR stock
+        const { data: sourceProduct } = await supabase
+            .from('products')
+            .select('stock')
+            .eq('id', product.id) // Assuming product.id passed is the wholesaler's product ID
+            .single();
+            
+        if (sourceProduct && sourceProduct.stock < quantity) {
+            toast.error(`Wholesaler only has ${sourceProduct.stock} units available.`);
+            setIsProcessing(false);
+            return;
+        }
+
         await new Promise(resolve => setTimeout(resolve, 2000));
 
-        // 1. Create Restock Order Record
+        // 2. Create Restock Order Record
         const { error: orderError } = await supabase
             .from('restock_orders')
             .insert({
@@ -70,7 +82,7 @@ const RetailerPaymentPage = () => {
                 wholesaler_id: wholesaler.id,
                 product_id: product.id,
                 quantity: quantity,
-                status: 'paid' 
+                status: 'paid' // Paid but NOT yet delivered
             });
 
         if (orderError) {
@@ -80,62 +92,23 @@ const RetailerPaymentPage = () => {
             return;
         }
 
-        // 2. Update Inventory Logic
-        // First, check if the retailer already has a version of this product in their own inventory.
-        // We check by matching the name (or you could have a 'source_product_id' column for stricter linking).
-        const { data: existingProducts } = await supabase
+        // 3. DECREASE WHOLESALER STOCK ONLY
+        // We reserve the stock now so they don't sell it to someone else.
+        const { error: decreaseError } = await supabase
             .from('products')
-            .select('*')
-            .eq('retailer_id', retailer.id)
-            .eq('name', product.name); // Matching by name to see if we already sell this
+            .update({ stock: (sourceProduct?.stock || 0) - quantity })
+            .eq('id', product.id);
 
-        const existingProduct = existingProducts && existingProducts.length > 0 ? existingProducts[0] : null;
-
-        if (existingProduct) {
-            // UPDATE existing inventory
-            const { error: updateError } = await supabase
-                .from('products')
-                .update({ stock: (existingProduct.stock || 0) + quantity })
-                .eq('id', existingProduct.id);
-
-            if (updateError) {
-                console.error("Stock update failed:", updateError);
-                toast.error("Order placed, but inventory update failed.");
-            }
-        } else {
-            // INSERT new product to retailer's inventory
-            // We create a new product ID (letting Supabase gen_random_uuid handle it or creating a unique string)
-            // Note: Our ID column is text. Let's generate a simple unique ID.
-            const newId = `ret-prod-${Date.now()}-${Math.floor(Math.random()*1000)}`;
-            
-            // We need to fetch the full product details from the source to copy them properly if they weren't passed fully
-            // But for now, we'll use what we have in orderDetails + defaults.
-            
-            const { error: insertError } = await supabase
-                .from('products')
-                .insert({
-                    id: newId,
-                    name: product.name,
-                    price: product.price, // Retailer initially sells at same MSRP/Wholesale price until they edit it
-                    description: product.description || `Product sourced from ${wholesaler.name}`,
-                    category: product.category,
-                    theme_id: product.theme_id, // Ideally passed in orderDetails
-                    retailer_id: retailer.id,
-                    stock: quantity,
-                    in_stock: true,
-                    images: product.images || ['/placeholder.svg'],
-                    wholesaler_id: wholesaler.id 
-                });
-
-            if (insertError) {
-                console.error("Inventory add failed:", insertError);
-                toast.error("Order placed, but failed to add item to inventory.");
-            }
+        if (decreaseError) {
+            console.error("Failed to decrease wholesaler stock:", decreaseError);
         }
+
+        // NOTE: We DO NOT increase retailer stock here anymore.
+        // That happens when the retailer receives the shipment.
 
         setIsProcessing(false);
         setIsSuccess(true);
-        toast.success("Payment successful! Inventory updated.");
+        toast.success("Order placed successfully! Stock reserved.");
     };
 
     if (isSuccess) {
@@ -146,10 +119,14 @@ const RetailerPaymentPage = () => {
                     <div className="h-24 w-24 bg-green-100 rounded-full flex items-center justify-center mb-6">
                         <CheckCircle className="h-12 w-12 text-green-600" />
                     </div>
-                    <h1 className="text-3xl font-bold text-foreground mb-2">Order Confirmed!</h1>
+                    <h1 className="text-3xl font-bold text-foreground mb-2">Order Placed!</h1>
                     <p className="text-muted-foreground mb-8 max-w-md">
-                        Your payment of ₹{total.toLocaleString()} has been processed successfully. 
-                        {quantity} units of <strong>{product.name}</strong> have been added to your inventory.
+                        Your payment of ₹{total.toLocaleString()} has been processed. 
+                        The order has been sent to <strong>{wholesaler.name}</strong>.
+                        <br/><br/>
+                        <span className="text-sm bg-yellow-100 text-yellow-800 px-2 py-1 rounded">
+                            Note: Inventory will update once you mark the order as "Received" in your dashboard.
+                        </span>
                     </p>
                     <Button onClick={() => navigate('/retailer/dashboard')}>
                         Return to Dashboard
@@ -168,12 +145,10 @@ const RetailerPaymentPage = () => {
                 </Button>
 
                 <div className="grid grid-cols-1 lg:grid-cols-2 gap-12 max-w-5xl mx-auto">
-                    
-                    {/* Order Summary */}
                     <div className="space-y-6">
                         <div>
                             <h1 className="text-3xl font-bold mb-2">Review & Pay</h1>
-                            <p className="text-muted-foreground">Complete your purchase to replenish stock.</p>
+                            <p className="text-muted-foreground">Place order to reserve stock from wholesaler.</p>
                         </div>
 
                         <Card>
@@ -191,26 +166,18 @@ const RetailerPaymentPage = () => {
                                         <p className="text-sm text-muted-foreground">Qty: {quantity}</p>
                                     </div>
                                 </div>
-                                
                                 <Separator />
-                                
                                 <div className="flex justify-between items-center text-sm">
                                     <span className="flex items-center gap-2 text-muted-foreground">
-                                        <Truck className="h-4 w-4" /> Supplied by
+                                        <Truck className="h-4 w-4" /> Supplier
                                     </span>
                                     <span className="font-medium text-foreground">{wholesaler.name}</span>
-                                </div>
-                                <div className="flex justify-between items-center text-sm">
-                                    <span className="flex items-center gap-2 text-muted-foreground">
-                                        <Store className="h-4 w-4" /> Ship to
-                                    </span>
-                                    <span className="font-medium text-foreground">{retailer.name} ({retailer.city})</span>
                                 </div>
                             </CardContent>
                         </Card>
 
-                        {/* Payment Method Mock */}
-                        <Card>
+                         {/* Payment Method Mock */}
+                         <Card>
                             <CardHeader>
                                 <CardTitle>Payment Method</CardTitle>
                                 <CardDescription>Select how you want to pay.</CardDescription>
@@ -220,19 +187,13 @@ const RetailerPaymentPage = () => {
                                     <div className="border-2 border-primary rounded-lg p-4 flex-1 cursor-pointer bg-primary/5">
                                         <CreditCard className="h-6 w-6 mb-2 text-primary" />
                                         <p className="font-medium">Credit Balance</p>
-                                        <p className="text-xs text-muted-foreground">Instant Transfer</p>
-                                    </div>
-                                    <div className="border rounded-lg p-4 flex-1 cursor-not-allowed opacity-50">
-                                        <span className="text-xl mb-2 block">🏦</span>
-                                        <p className="font-medium">Net Banking</p>
-                                        <p className="text-xs text-muted-foreground">Unavailable</p>
+                                        <p className="text-xs text-muted-foreground">Instant</p>
                                     </div>
                                 </div>
                             </CardContent>
                         </Card>
                     </div>
 
-                    {/* Checkout Panel */}
                     <div>
                         <Card className="sticky top-24 shadow-lg border-primary/20">
                             <CardHeader className="bg-muted/20">
@@ -240,22 +201,20 @@ const RetailerPaymentPage = () => {
                             </CardHeader>
                             <CardContent className="space-y-4 pt-6">
                                 <div className="flex justify-between">
-                                    <span className="text-muted-foreground">Subtotal ({quantity} items)</span>
+                                    <span className="text-muted-foreground">Subtotal</span>
                                     <span>₹{subtotal.toLocaleString()}</span>
                                 </div>
                                 <div className="flex justify-between">
-                                    <span className="text-muted-foreground">Shipping & Handling</span>
+                                    <span className="text-muted-foreground">Shipping</span>
                                     <span>₹{shipping.toLocaleString()}</span>
                                 </div>
                                 <div className="flex justify-between">
-                                    <span className="text-muted-foreground">Tax (18% GST)</span>
+                                    <span className="text-muted-foreground">Tax</span>
                                     <span>₹{tax.toLocaleString()}</span>
                                 </div>
-                                
                                 <Separator className="my-2" />
-                                
                                 <div className="flex justify-between items-center">
-                                    <span className="text-lg font-bold">Total Payable</span>
+                                    <span className="text-lg font-bold">Total</span>
                                     <span className="text-2xl font-bold text-primary">₹{total.toLocaleString()}</span>
                                 </div>
                             </CardContent>
@@ -266,13 +225,7 @@ const RetailerPaymentPage = () => {
                                     onClick={handlePayment}
                                     disabled={isProcessing}
                                 >
-                                    {isProcessing ? (
-                                        <span className="flex items-center gap-2">Processing...</span>
-                                    ) : (
-                                        <span className="flex items-center gap-2">
-                                            Pay Now <CreditCard className="h-5 w-5" />
-                                        </span>
-                                    )}
+                                    {isProcessing ? 'Processing...' : 'Confirm Order'}
                                 </Button>
                             </CardFooter>
                         </Card>
