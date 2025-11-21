@@ -3,7 +3,7 @@
 // This 'Product' interface matches your Supabase table
 // and the one needed by AdminDashboard.tsx
 export interface Product {
-  id: number;
+  id: string;
   name: string;
   price: number;
   description: string | null;
@@ -12,10 +12,22 @@ export interface Product {
   inStock: boolean;
   images: string[] | null;
   tag?: string | null;
+  wholesaler_stock?: number | null; 
+  
+  // Existing
+  stock?: number;
+  retailer_id?: string | null;
+  wholesaler_id?: string | null;
+  
+  // For joins
+  wholesalers?: {
+    id: string;
+    name: string;
+    location: string;
+  };
 }
 
-// This 'Theme' interface matches your Supabase table
-// and the one needed by AdminDashboard.tsx
+
 export interface Theme {
   id: string;
   name: string;
