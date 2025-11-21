@@ -7,6 +7,7 @@ import Index from "./pages/Index";
 import LoginPage from "./pages/LoginPage";
 import AdminLoginPage from "./pages/AdminLogin";
 import ShopAll from "./pages/ShopAll";
+import { LocationProvider } from "@/contexts/LocationContext"; 
 import AllThemes from "./pages/AllThemes";
 import ThemePage from "./pages/ThemePage";
 import ProductDetailPage from "./pages/ProductDetailPage";
@@ -31,6 +32,7 @@ const App = () => (
   <QueryClientProvider client={queryClient}>
     <TooltipProvider>
       <CartProvider>
+        <LocationProvider>
         <Toaster />
         <BrowserRouter>
           <Routes>
@@ -68,6 +70,7 @@ const App = () => (
             <Route path="*" element={<NotFound />} />
           </Routes>
         </BrowserRouter>
+        </LocationProvider>
       </CartProvider>
     </TooltipProvider>
   </QueryClientProvider>

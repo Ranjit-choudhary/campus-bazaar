@@ -8,7 +8,8 @@ import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { toast } from 'sonner';
-import { MapPin, Edit2, Save, X, Loader2, Search as SearchIcon } from 'lucide-react';
+import { MapPin, Edit2, Save, Loader2, Search as SearchIcon, Crosshair, Package, Clock, CheckCircle } from 'lucide-react';
+import { useLocation } from '@/contexts/LocationContext'; // Import Location Context
 
 // --- GOOGLE MAPS IMPORTS ---
 import { GoogleMap, LoadScript, Marker, Autocomplete } from '@react-google-maps/api';
@@ -30,6 +31,7 @@ interface AddressData {
 
 const ProfilePage = () => {
   const navigate = useNavigate();
+  const { setUserCity } = useLocation(); // To update app-wide location on save
   const [loading, setLoading] = useState(true);
   const [user, setUser] = useState<any>(null);
   const [profile, setProfile] = useState<any>(null);
@@ -48,7 +50,9 @@ const ProfilePage = () => {
   const [map, setMap] = useState<google.maps.Map | null>(null);
   const [markerPosition, setMarkerPosition] = useState<{ lat: number; lng: number } | null>(null);
   const autocompleteRef = useRef<google.maps.places.Autocomplete | null>(null);
-  const defaultCenter = { lat: 17.5449, lng: 78.5718 }; // Default: BITS Hyderabad
+  
+  // Fallback if geolocation fails
+  const FALLBACK_CENTER = { lat: 28.6139, lng: 77.2090 }; // New Delhi
 
   useEffect(() => {
     const fetchProfile = async () => {
@@ -72,7 +76,8 @@ const ProfilePage = () => {
       } else {
         // Initialize form with name if no address exists
         setAddressForm(prev => ({ ...prev, full_name: user.user_metadata.full_name || '' }));
-        setMarkerPosition(defaultCenter);
+        // Try to detect location for map if no address
+        getUserLocation();
       }
 
       // 3. Fetch Orders
@@ -86,9 +91,33 @@ const ProfilePage = () => {
 
   // --- GOOGLE MAPS LOGIC ---
 
+  const getUserLocation = () => {
+    if (navigator.geolocation) {
+        navigator.geolocation.getCurrentPosition(
+            (position) => {
+                const pos = {
+                    lat: position.coords.latitude,
+                    lng: position.coords.longitude,
+                };
+                setMarkerPosition(pos);
+                map?.panTo(pos);
+                map?.setZoom(15);
+                // Optional: Pre-fill city based on detection if you want
+                fetchAddressFromCoordinates(pos.lat, pos.lng, true); 
+            },
+            () => {
+                setMarkerPosition(FALLBACK_CENTER);
+            }
+        );
+    } else {
+        setMarkerPosition(FALLBACK_CENTER);
+    }
+  };
+
   const onLoadMap = useCallback((mapInstance: google.maps.Map) => {
       setMap(mapInstance);
-  }, []);
+      if (markerPosition) mapInstance.panTo(markerPosition);
+  }, [markerPosition]);
 
   const onLoadAutocomplete = (autocomplete: google.maps.places.Autocomplete) => {
       autocompleteRef.current = autocomplete;
@@ -117,14 +146,14 @@ const ProfilePage = () => {
       }
   };
 
-  const fetchAddressFromCoordinates = async (lat: number, lng: number) => {
+  const fetchAddressFromCoordinates = async (lat: number, lng: number, silent = false) => {
       try {
           if (!GOOGLE_MAPS_API_KEY) return;
           const response = await fetch(`https://maps.googleapis.com/maps/api/geocode/json?latlng=${lat},${lng}&key=${GOOGLE_MAPS_API_KEY}`);
           const data = await response.json();
           if (data.status === 'OK' && data.results?.[0]) {
               fillAddressFromComponents(data.results[0].address_components);
-              toast.success("Location updated");
+              if (!silent) toast.success("Location updated from map");
           }
       } catch (error) {
           console.error("Geocoding error:", error);
@@ -173,8 +202,14 @@ const ProfilePage = () => {
         if (error) throw error;
 
         setSavedAddress(addressForm);
+        
+        // CRITICAL: Update the global Location Context so the shop filters update immediately!
+        if (addressForm.city) {
+            setUserCity(addressForm.city);
+        }
+
         setIsEditing(false);
-        toast.success("Address updated successfully!");
+        toast.success("Address & Location preference updated!");
     } catch (error: any) {
         toast.error(error.message || "Failed to save address");
     } finally {
@@ -196,13 +231,13 @@ const ProfilePage = () => {
       <div className="container mx-auto px-4 py-8">
         
         {/* Header Section */}
-        <Card className="mb-8">
+        <Card className="mb-8 bg-gradient-to-r from-primary/5 to-background border-primary/10">
           <CardHeader>
             <div className="flex items-center justify-between flex-wrap gap-4">
               <div className="flex items-center gap-4">
-                <Avatar className="h-20 w-20 border-2 border-primary/20">
+                <Avatar className="h-20 w-20 border-4 border-background shadow-lg">
                   <AvatarImage src={profile?.avatar_url} alt={profile?.full_name} />
-                  <AvatarFallback className="text-xl">{profile?.full_name?.charAt(0) || user?.email?.charAt(0)}</AvatarFallback>
+                  <AvatarFallback className="text-2xl font-bold text-primary">{profile?.full_name?.charAt(0) || user?.email?.charAt(0)}</AvatarFallback>
                 </Avatar>
                 <div>
                   <CardTitle className="text-3xl">{profile?.full_name || 'User'}</CardTitle>
@@ -223,7 +258,7 @@ const ProfilePage = () => {
             
             {/* Left Column: Address */}
             <div className="lg:col-span-2">
-                <Card className="h-full">
+                <Card className="h-full border-l-4 border-l-primary">
                     <CardHeader className="flex flex-row items-center justify-between">
                         <CardTitle className="flex items-center gap-2">
                             <MapPin className="h-5 w-5 text-primary" /> Location & Address
@@ -238,20 +273,23 @@ const ProfilePage = () => {
                         {isEditing ? (
                             // --- EDIT MODE ---
                             <div className="space-y-6 animate-in fade-in slide-in-from-top-2">
-                                <div className="border rounded-lg overflow-hidden shadow-sm h-[300px] relative">
+                                <div className="border rounded-lg overflow-hidden shadow-sm h-[300px] relative bg-muted/20">
                                     {GOOGLE_MAPS_API_KEY ? (
                                         <LoadScript googleMapsApiKey={GOOGLE_MAPS_API_KEY} libraries={LIBRARIES}>
-                                            <div className="absolute top-2 left-2 right-2 z-10">
-                                                <Autocomplete onLoad={onLoadAutocomplete} onPlaceChanged={onPlaceChanged}>
+                                            <div className="absolute top-2 left-2 right-2 z-10 flex gap-2">
+                                                <Autocomplete onLoad={onLoadAutocomplete} onPlaceChanged={onPlaceChanged} className='flex-grow'>
                                                     <div className="relative">
                                                         <SearchIcon className="absolute left-3 top-2.5 h-4 w-4 text-muted-foreground" />
-                                                        <Input placeholder="Search area..." className="bg-background shadow-md w-full pl-9" />
+                                                        <Input placeholder="Search your area..." className="bg-background shadow-md w-full pl-9" />
                                                     </div>
                                                 </Autocomplete>
+                                                <Button size="icon" variant="secondary" className="shadow-md" onClick={getUserLocation} title="Use Current Location">
+                                                    <Crosshair className="h-4 w-4" />
+                                                </Button>
                                             </div>
                                             <GoogleMap
                                                 mapContainerStyle={{ width: '100%', height: '100%' }}
-                                                center={markerPosition || defaultCenter}
+                                                center={markerPosition || FALLBACK_CENTER}
                                                 zoom={15}
                                                 onLoad={onLoadMap}
                                                 options={{ streetViewControl: false, mapTypeControl: false }}
@@ -272,9 +310,9 @@ const ProfilePage = () => {
                                         </div>
                                     )}
                                 </div>
-                                <div className="text-xs text-center text-muted-foreground">
-                                    Drag the marker on the map to automatically fill details.
-                                </div>
+                                <p className="text-xs text-center text-muted-foreground">
+                                    Pinpoint your exact location for faster delivery.
+                                </p>
 
                                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                                     <div className="space-y-2"><Label>Full Name</Label><Input value={addressForm.full_name} onChange={e => setAddressForm({...addressForm, full_name: e.target.value})} /></div>
@@ -299,14 +337,14 @@ const ProfilePage = () => {
                             // --- VIEW MODE ---
                             <div className="space-y-4">
                                 {savedAddress ? (
-                                    <div className="space-y-1">
+                                    <div className="space-y-2 p-4 bg-muted/30 rounded-lg border border-dashed">
                                         <div className="font-semibold text-lg">{savedAddress.full_name}</div>
                                         <div className="text-muted-foreground">{savedAddress.address_line1}</div>
                                         {savedAddress.address_line2 && <div className="text-muted-foreground">{savedAddress.address_line2}</div>}
                                         <div className="text-muted-foreground">
                                             {savedAddress.city}, {savedAddress.state} - {savedAddress.zip_code}
                                         </div>
-                                        <div className="text-muted-foreground text-sm mt-2">
+                                        <div className="text-muted-foreground text-sm mt-3 pt-3 border-t">
                                             <span className="font-medium text-foreground">Phone:</span> {savedAddress.phone}
                                         </div>
                                     </div>
@@ -314,7 +352,8 @@ const ProfilePage = () => {
                                     <div className="text-center py-8 text-muted-foreground bg-muted/20 rounded-lg border border-dashed">
                                         <MapPin className="h-10 w-10 mx-auto mb-2 opacity-20" />
                                         <p>No address saved yet.</p>
-                                        <Button variant="link" onClick={() => setIsEditing(true)}>Add Address</Button>
+                                        <p className="text-xs mb-4">Add an address to get location-based product recommendations.</p>
+                                        <Button onClick={() => setIsEditing(true)}>Add Address</Button>
                                     </div>
                                 )}
                             </div>
@@ -327,27 +366,32 @@ const ProfilePage = () => {
             <div className="lg:col-span-1">
                 <Card className="h-full flex flex-col">
                     <CardHeader>
-                        <CardTitle>Order History</CardTitle>
+                        <CardTitle className="flex items-center gap-2">
+                             <Package className="h-5 w-5 text-primary" /> Order History
+                        </CardTitle>
                     </CardHeader>
                     <CardContent className="flex-1 overflow-y-auto max-h-[600px] pr-2">
                         <div className="space-y-4">
                         {orders.length > 0 ? (
                             orders.map(order => (
-                            <div key={order.id} className="p-4 border rounded-lg hover:bg-muted/50 transition-colors">
-                                <div className="flex justify-between items-start mb-2">
+                            <div key={order.id} className="p-4 border rounded-lg hover:bg-muted/50 transition-colors bg-card shadow-sm">
+                                <div className="flex justify-between items-start mb-3">
                                     <div>
-                                        <div className="font-mono text-xs text-muted-foreground">ORDER #{order.id.substring(0, 8).toUpperCase()}</div>
-                                        <div className="text-xs text-muted-foreground">{new Date(order.created_at).toLocaleDateString()}</div>
+                                        <div className="font-mono text-xs text-muted-foreground">#{order.id.substring(0, 8).toUpperCase()}</div>
+                                        <div className="text-xs text-muted-foreground flex items-center gap-1 mt-1">
+                                            <Clock className="h-3 w-3" /> {new Date(order.created_at).toLocaleDateString()}
+                                        </div>
                                     </div>
-                                    <div className={`px-2 py-0.5 rounded text-[10px] font-bold uppercase ${
+                                    <div className={`px-2 py-0.5 rounded text-[10px] font-bold uppercase flex items-center gap-1 ${
                                         order.status === 'delivered' ? 'bg-green-100 text-green-700' : 
                                         order.status === 'cancelled' ? 'bg-red-100 text-red-700' : 
                                         'bg-blue-100 text-blue-700'
                                     }`}>
+                                        {order.status === 'delivered' && <CheckCircle className="h-3 w-3" />}
                                         {order.status}
                                     </div>
                                 </div>
-                                <div className="flex justify-between items-end mt-2">
+                                <div className="flex justify-between items-end mt-2 pt-2 border-t border-dashed">
                                     <div className="text-sm">
                                         {order.order_details ? (
                                             <span className="text-muted-foreground">{order.order_details.length} items</span>
@@ -355,12 +399,16 @@ const ProfilePage = () => {
                                             <span className="text-muted-foreground">View details</span>
                                         )}
                                     </div>
-                                    <div className="font-bold">₹{order.total_amount.toLocaleString()}</div>
+                                    <div className="font-bold text-lg">₹{order.total_amount.toLocaleString()}</div>
                                 </div>
                             </div>
                             ))
                         ) : (
-                            <p className="text-muted-foreground text-center py-8">No orders yet.</p>
+                            <div className="text-center py-12 text-muted-foreground">
+                                <Package className="h-12 w-12 mx-auto mb-3 opacity-20" />
+                                <p>No orders placed yet.</p>
+                                <Button variant="link" onClick={() => navigate('/shop-all')}>Start Shopping</Button>
+                            </div>
                         )}
                         </div>
                     </CardContent>
