@@ -1,8 +1,7 @@
-import { useState, useEffect } from 'react';
-import { useNavigate, Link } from 'react-router-dom';
+import { useState, useEffect, useRef, useCallback } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { supabase } from '../lib/supabase';
 import Navbar from '../components/Navbar';
-// Corrected Imports: pointing to src/components/ui from src/pages
 import { Button } from '../components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle, CardFooter } from '../components/ui/card';
 import { Input } from '../components/ui/input';
@@ -11,9 +10,18 @@ import { Checkbox } from '../components/ui/checkbox';
 import { RadioGroup, RadioGroupItem } from '../components/ui/radio-group';
 import { useCart } from '../contexts/CartContext';
 import { toast } from 'sonner';
-import { MapPin, Truck, CreditCard, Wallet, Banknote, Loader2 } from 'lucide-react';
+import { MapPin, Truck, CreditCard, Wallet, Banknote, Save, Loader2 } from 'lucide-react';
 
-// Define Razorpay type on window
+// --- GOOGLE MAPS IMPORTS ---
+import { GoogleMap, LoadScript, Marker, Autocomplete } from '@react-google-maps/api';
+
+// --- CONFIGURATION ---
+// Read API Key from .env file
+const GOOGLE_MAPS_API_KEY = import.meta.env.VITE_GOOGLE_MAPS_API_KEY || "";
+
+// Libraries needed for Places Autocomplete (must be a static constant)
+const LIBRARIES: ("places")[] = ["places"];
+
 declare global {
     interface Window {
         Razorpay: any;
@@ -33,8 +41,9 @@ interface CheckoutAddress {
 
 const CheckoutPage = () => {
   const navigate = useNavigate();
-  const { cart, cartItemCount, clearCart } = useCart();
+  const { cart, clearCart } = useCart();
   const [loading, setLoading] = useState(false);
+  const [isSaving, setIsSaving] = useState(false);
   
   const [user, setUser] = useState<any>(null);
   const [termsAccepted, setTermsAccepted] = useState(false);
@@ -55,6 +64,15 @@ const CheckoutPage = () => {
     country: 'India'
   });
 
+  // --- GOOGLE MAPS STATE ---
+  const [map, setMap] = useState<google.maps.Map | null>(null);
+  const [markerPosition, setMarkerPosition] = useState<{ lat: number; lng: number } | null>(null);
+  const autocompleteRef = useRef<google.maps.places.Autocomplete | null>(null);
+
+  // Default Map Center (BITS Hyderabad)
+  const defaultCenter = { lat: 17.5449, lng: 78.5718 };
+
+  // Initialize User Data
   useEffect(() => {
     const fetchUserAndAddress = async () => {
       const { data: { user } } = await supabase.auth.getUser();
@@ -73,6 +91,7 @@ const CheckoutPage = () => {
           setAddressForm(address);
         } else {
           setIsEditingAddress(true);
+          setMarkerPosition(defaultCenter); // Set default pin if no address
         }
       } else {
         navigate('/login');
@@ -81,10 +100,143 @@ const CheckoutPage = () => {
     fetchUserAndAddress();
   }, [navigate]);
 
+  // --- GOOGLE MAPS HANDLERS ---
+
+  const onLoadMap = useCallback((mapInstance: google.maps.Map) => {
+      setMap(mapInstance);
+  }, []);
+
+  const onLoadAutocomplete = (autocomplete: google.maps.places.Autocomplete) => {
+      autocompleteRef.current = autocomplete;
+  };
+
+  // When user selects a place from the search bar
+  const onPlaceChanged = () => {
+      if (autocompleteRef.current) {
+          const place = autocompleteRef.current.getPlace();
+          if (place.geometry && place.geometry.location) {
+              const lat = place.geometry.location.lat();
+              const lng = place.geometry.location.lng();
+              
+              setMarkerPosition({ lat, lng });
+              map?.panTo({ lat, lng });
+              map?.setZoom(17);
+              
+              fillAddressFromComponents(place.address_components);
+          } else {
+              toast.error("Please select a valid location from the dropdown");
+          }
+      }
+  };
+
+  // When user drags the marker manually
+  const onMarkerDragEnd = async (e: google.maps.MapMouseEvent) => {
+      if (e.latLng) {
+          const lat = e.latLng.lat();
+          const lng = e.latLng.lng();
+          setMarkerPosition({ lat, lng });
+          
+          // Reverse Geocoding (Get address from dropped pin)
+          await fetchAddressFromCoordinates(lat, lng);
+      }
+  };
+
+  // Call Google Geocoding API to convert Lat/Lng -> Text
+  const fetchAddressFromCoordinates = async (lat: number, lng: number) => {
+      try {
+          if (!GOOGLE_MAPS_API_KEY) {
+              toast.error("Google Maps API Key is missing");
+              return;
+          }
+          
+          const response = await fetch(
+              `https://maps.googleapis.com/maps/api/geocode/json?latlng=${lat},${lng}&key=${GOOGLE_MAPS_API_KEY}`
+          );
+          const data = await response.json();
+          
+          if (data.status === 'OK' && data.results?.[0]) {
+              fillAddressFromComponents(data.results[0].address_components);
+              // Also set formatted address as line 1
+              const formatted = data.results[0].formatted_address;
+              toast.success(`Location updated`);
+          } else {
+              console.error("Geocoding failed:", data.status);
+          }
+      } catch (error) {
+          console.error("Geocoding error:", error);
+      }
+  };
+
+  // Helper to parse Google's address components
+  const fillAddressFromComponents = (components: google.maps.GeocoderAddressComponent[] | undefined) => {
+      if (!components) return;
+
+      let streetNumber = '';
+      let route = '';
+      let sublocality = '';
+      let city = '';
+      let state = '';
+      let zip = '';
+      let country = '';
+
+      components.forEach(component => {
+          const types = component.types;
+          if (types.includes('street_number')) streetNumber = component.long_name;
+          if (types.includes('route')) route = component.long_name;
+          if (types.includes('sublocality') || types.includes('neighborhood')) sublocality = component.long_name;
+          if (types.includes('locality')) city = component.long_name;
+          if (types.includes('administrative_area_level_1')) state = component.long_name;
+          if (types.includes('postal_code')) zip = component.long_name;
+          if (types.includes('country')) country = component.long_name;
+      });
+
+      setAddressForm(prev => ({
+          ...prev,
+          address_line1: `${streetNumber} ${route}`.trim() || prev.address_line1,
+          address_line2: sublocality,
+          city: city || prev.city,
+          state: state || prev.state,
+          zip_code: zip || prev.zip_code,
+          country: country || 'India'
+      }));
+  };
+
+  // --- STANDARD FORM HANDLERS ---
+
   const handleAddressChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const { name, value } = e.target;
     setAddressForm(prev => ({ ...prev, [name]: value }));
   };
+
+  const handleSaveAddress = async () => {
+      if (!addressForm.full_name || !addressForm.address_line1 || !addressForm.city || !addressForm.zip_code || !addressForm.phone) {
+          toast.error('Please fill in all required address fields.');
+          return;
+      }
+
+      setIsSaving(true);
+      try {
+          const { error } = await supabase
+              .from('addresses')
+              .upsert({ 
+                  user_id: user.id, 
+                  ...addressForm 
+              }, { onConflict: 'user_id' });
+
+          if (error) throw error;
+
+          setSavedAddress(addressForm);
+          setIsEditingAddress(false);
+          toast.success("Address saved successfully!");
+      } catch (error: any) {
+          console.error("Save error:", error);
+          toast.error("Failed to save address.");
+      } finally {
+          setIsSaving(false);
+      }
+  };
+
+  // --- CHECKOUT LOGIC ---
 
   const subtotal = cart.reduce((total, item) => {
     if (item.products) {
@@ -94,17 +246,12 @@ const CheckoutPage = () => {
     }
     return total;
   }, 0);
-  
   const shipping = orderType === 'pickup' ? 0 : (subtotal > 0 ? 50 : 0);
   const total = subtotal + shipping;
 
-  // --- Helper to Load Razorpay Script Dynamically ---
   const loadRazorpayScript = (src: string) => {
     return new Promise((resolve) => {
-      if (document.querySelector(`script[src="${src}"]`)) {
-          resolve(true);
-          return;
-      }
+      if (document.querySelector(`script[src="${src}"]`)) { resolve(true); return; }
       const script = document.createElement('script');
       script.src = src;
       script.onload = () => resolve(true);
@@ -114,54 +261,34 @@ const CheckoutPage = () => {
   };
 
   const handlePlaceOrder = async () => {
-    // Validation
-    if (orderType === 'delivery') {
-        if (isEditingAddress || !savedAddress) {
-            if (!addressForm.full_name || !addressForm.address_line1 || !addressForm.city || !addressForm.zip_code || !addressForm.phone) {
-                toast.error('Please fill in all required address fields.');
-                return;
-            }
-        }
+    if (orderType === 'delivery' && isEditingAddress) {
+        toast.error("Please save your address first.");
+        return;
     }
-
     if (!termsAccepted) {
       toast.error('You must accept the terms and conditions.');
       return;
     }
-
-    // Determine Flow
-    if (paymentMethod === 'cod') {
-        await finalizeOrder('pending'); 
-    } else {
-        // Online Payment (Razorpay)
-        await initializeRazorpay();
-    }
+    if (paymentMethod === 'cod') await finalizeOrder('pending'); 
+    else await initializeRazorpay();
   };
 
   const initializeRazorpay = async () => {
       setLoading(true);
-      
-      // 1. Load the script
       const res = await loadRazorpayScript('https://checkout.razorpay.com/v1/checkout.js');
-
       if (!res) {
-          toast.error("Razorpay SDK failed to load. Check internet connection.");
+          toast.error("Razorpay SDK failed to load.");
           setLoading(false);
           return;
       }
 
-      // 2. Create Options
       const options = {
-          key: "rzp_test_Ri5jk85JFwqzoQ", // Your Test Key
-          amount: Math.round(total * 100), // Amount in paise (Integer)
+          key: "rzp_test_Ri5jk85JFwqzoQ", // Replace with your key
+          amount: Math.round(total * 100),
           currency: "INR",
           name: "Campus Bazaar",
-          description: "Test Transaction",
-          // You can add a logo here if you have one hosted
-          // image: "https://campus-bazaar.vercel.app/logo.png", 
+          description: "Order Payment",
           handler: function (response: any) {
-              // Success Callback
-              console.log("Payment ID: ", response.razorpay_payment_id);
               toast.success(`Payment Successful!`);
               finalizeOrder('paid', response.razorpay_payment_id);
           },
@@ -170,44 +297,24 @@ const CheckoutPage = () => {
               email: user?.email,
               contact: addressForm.phone || '9999999999'
           },
-          notes: {
-              address: "Campus Bazaar Checkout"
-          },
-          theme: {
-              color: "#3399cc"
-          }
+          theme: { color: "#3399cc" }
       };
 
-      // 3. Open Modal
       try {
         const rzp1 = new window.Razorpay(options);
         rzp1.on('payment.failed', function (response: any){
-            toast.error(`Payment Failed: ${response.error.description}`);
+            toast.error(response.error.description);
             setLoading(false);
         });
         rzp1.open();
       } catch (error) {
-          console.error("Razorpay Init Error:", error);
-          toast.error("Something went wrong initializing payment.");
+          toast.error("Payment init failed");
           setLoading(false);
       }
   };
 
   const finalizeOrder = async (paymentStatus: string, paymentId?: string) => {
     try {
-        // Save Address if needed
-        if (orderType === 'delivery' && (isEditingAddress || !savedAddress)) {
-            const { error: addressError } = await supabase
-            .from('addresses')
-            .upsert({ 
-                user_id: user.id, 
-                ...addressForm 
-            }, { onConflict: 'user_id' });
-
-            if (addressError) throw addressError;
-        }
-        
-        // Create Order Snapshot
         const orderDetails = cart.map(item => ({
             product_id: item.product_id,
             quantity: item.quantity,
@@ -215,7 +322,6 @@ const CheckoutPage = () => {
             name: item.products?.name
         }));
 
-        // Insert Order
         const { data: orderData, error: orderError } = await supabase
         .from('orders')
         .insert({
@@ -226,7 +332,6 @@ const CheckoutPage = () => {
             payment_method: paymentMethod,
             payment_status: paymentStatus,
             order_details: orderDetails, 
-            // You could store paymentId in a 'transaction_id' column if you added one
         })
         .select()
         .single();
@@ -239,7 +344,7 @@ const CheckoutPage = () => {
 
     } catch (error: any) {
         console.error('Checkout Error:', error);
-        toast.error(error.message || 'Failed to place order.');
+        toast.error(error.message);
     } finally {
         setLoading(false);
     }
@@ -252,31 +357,20 @@ const CheckoutPage = () => {
         <h1 className="text-3xl font-bold text-foreground mb-8">Checkout</h1>
         
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
-          {/* Left Column */}
           <div className="lg:col-span-2 space-y-6">
             
             {/* 1. Delivery Method */}
             <Card>
                 <CardHeader><CardTitle className="text-lg">1. Delivery Method</CardTitle></CardHeader>
                 <CardContent>
-                    <RadioGroup 
-                        value={orderType} 
-                        onValueChange={(v) => setOrderType(v as 'delivery' | 'pickup')}
-                        className="grid grid-cols-1 sm:grid-cols-2 gap-4"
-                    >
-                        <div className={`flex items-center space-x-2 border p-4 rounded-lg cursor-pointer transition-colors ${orderType === 'delivery' ? 'border-primary bg-primary/5' : 'hover:bg-muted'}`}>
+                    <RadioGroup value={orderType} onValueChange={(v) => setOrderType(v as any)} className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                        <div className={`flex items-center space-x-2 border p-4 rounded-lg cursor-pointer ${orderType === 'delivery' ? 'border-primary bg-primary/5' : ''}`}>
                             <RadioGroupItem value="delivery" id="delivery" />
-                            <Label htmlFor="delivery" className="flex-grow cursor-pointer flex items-center gap-3">
-                                <Truck className="h-5 w-5 text-muted-foreground" />
-                                <div><div className="font-medium">Home Delivery</div><div className="text-xs text-muted-foreground">Delivered to your address</div></div>
-                            </Label>
+                            <Label htmlFor="delivery" className="flex-grow cursor-pointer flex items-center gap-3"><Truck className="h-5 w-5" /> Home Delivery</Label>
                         </div>
-                        <div className={`flex items-center space-x-2 border p-4 rounded-lg cursor-pointer transition-colors ${orderType === 'pickup' ? 'border-primary bg-primary/5' : 'hover:bg-muted'}`}>
+                        <div className={`flex items-center space-x-2 border p-4 rounded-lg cursor-pointer ${orderType === 'pickup' ? 'border-primary bg-primary/5' : ''}`}>
                             <RadioGroupItem value="pickup" id="pickup" />
-                            <Label htmlFor="pickup" className="flex-grow cursor-pointer flex items-center gap-3">
-                                <MapPin className="h-5 w-5 text-muted-foreground" />
-                                <div><div className="font-medium">Store Pickup</div><div className="text-xs text-muted-foreground">Collect from retailer</div></div>
-                            </Label>
+                            <Label htmlFor="pickup" className="flex-grow cursor-pointer flex items-center gap-3"><MapPin className="h-5 w-5" /> Store Pickup</Label>
                         </div>
                     </RadioGroup>
                 </CardContent>
@@ -293,25 +387,68 @@ const CheckoutPage = () => {
                     </CardHeader>
                     <CardContent>
                         {isEditingAddress ? (
-                            <div className="space-y-4 animate-in fade-in slide-in-from-top-2">
+                            <div className="space-y-6 animate-in fade-in slide-in-from-top-2">
+                                
+                                {/* GOOGLE MAP COMPONENT */}
+                                <div className="border rounded-lg overflow-hidden shadow-sm h-[350px] relative">
+                                    {GOOGLE_MAPS_API_KEY ? (
+                                        <LoadScript googleMapsApiKey={GOOGLE_MAPS_API_KEY} libraries={LIBRARIES}>
+                                            <div className="absolute top-2 left-2 right-2 z-10">
+                                                <Autocomplete onLoad={onLoadAutocomplete} onPlaceChanged={onPlaceChanged}>
+                                                    <Input placeholder="Search for a location..." className="bg-background shadow-md w-full" />
+                                                </Autocomplete>
+                                            </div>
+                                            <GoogleMap
+                                                mapContainerStyle={{ width: '100%', height: '100%' }}
+                                                center={markerPosition || defaultCenter}
+                                                zoom={15}
+                                                onLoad={onLoadMap}
+                                                options={{ streetViewControl: false, mapTypeControl: false }}
+                                            >
+                                                {markerPosition && (
+                                                    <Marker 
+                                                        position={markerPosition} 
+                                                        draggable={true} 
+                                                        onDragEnd={onMarkerDragEnd}
+                                                        animation={window.google ? window.google.maps.Animation.DROP : undefined}
+                                                    />
+                                                )}
+                                            </GoogleMap>
+                                        </LoadScript>
+                                    ) : (
+                                        <div className="h-full flex items-center justify-center bg-muted text-muted-foreground p-4 text-center">
+                                            Google Maps API Key is missing. Please check your .env file.
+                                        </div>
+                                    )}
+                                </div>
+                                <p className="text-xs text-muted-foreground text-center">Drag the pin to adjust your exact location.</p>
+
+                                {/* FORM */}
                                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                                    <div className="space-y-2"><Label>Full Name</Label><Input name="full_name" value={addressForm.full_name} onChange={handleAddressChange} placeholder="John Doe" /></div>
-                                    <div className="space-y-2"><Label>Phone Number</Label><Input name="phone" value={addressForm.phone} onChange={handleAddressChange} placeholder="+91 98765 43210" /></div>
+                                    <div className="space-y-2"><Label>Full Name</Label><Input name="full_name" value={addressForm.full_name} onChange={handleAddressChange} /></div>
+                                    <div className="space-y-2"><Label>Phone</Label><Input name="phone" value={addressForm.phone} onChange={handleAddressChange} /></div>
                                 </div>
-                                <div className="space-y-2"><Label>Address Line 1</Label><Input name="address_line1" value={addressForm.address_line1} onChange={handleAddressChange} placeholder="House No., Street Name" /></div>
-                                <div className="space-y-2"><Label>Address Line 2</Label><Input name="address_line2" value={addressForm.address_line2} onChange={handleAddressChange} placeholder="Apartment, Landmark" /></div>
+                                <div className="space-y-2"><Label>Address Line 1</Label><Input name="address_line1" value={addressForm.address_line1} onChange={handleAddressChange} /></div>
+                                <div className="space-y-2"><Label>Address Line 2</Label><Input name="address_line2" value={addressForm.address_line2} onChange={handleAddressChange} /></div>
                                 <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
-                                    <div className="space-y-2"><Label>City</Label><Input name="city" value={addressForm.city} onChange={handleAddressChange} placeholder="City" /></div>
-                                    <div className="space-y-2"><Label>State</Label><Input name="state" value={addressForm.state} onChange={handleAddressChange} placeholder="State" /></div>
-                                    <div className="space-y-2 col-span-2 md:col-span-1"><Label>ZIP Code</Label><Input name="zip_code" value={addressForm.zip_code} onChange={handleAddressChange} placeholder="123456" /></div>
+                                    <div className="space-y-2"><Label>City</Label><Input name="city" value={addressForm.city} onChange={handleAddressChange} /></div>
+                                    <div className="space-y-2"><Label>State</Label><Input name="state" value={addressForm.state} onChange={handleAddressChange} /></div>
+                                    <div className="space-y-2 col-span-2 md:col-span-1"><Label>ZIP</Label><Input name="zip_code" value={addressForm.zip_code} onChange={handleAddressChange} /></div>
                                 </div>
-                                {savedAddress && <Button variant="secondary" size="sm" onClick={() => setIsEditingAddress(false)}>Cancel</Button>}
+                                
+                                {/* ACTION BUTTONS */}
+                                <div className="flex gap-3 justify-end pt-2">
+                                    {savedAddress && <Button variant="outline" onClick={() => setIsEditingAddress(false)} disabled={isSaving}>Cancel</Button>}
+                                    <Button onClick={handleSaveAddress} disabled={isSaving}>
+                                        {isSaving ? <><Loader2 className="mr-2 h-4 w-4 animate-spin"/> Saving...</> : <><Save className="mr-2 h-4 w-4"/> Save Address</>}
+                                    </Button>
+                                </div>
                             </div>
                         ) : (
                             <div className="flex flex-col space-y-1">
                                 <p className="font-medium">{savedAddress?.full_name}</p>
                                 <p className="text-muted-foreground">{savedAddress?.address_line1}, {savedAddress?.address_line2}</p>
-                                <p className="text-muted-foreground">{savedAddress?.city}, {savedAddress?.state} {savedAddress?.zip_code}</p>
+                                <p className="text-muted-foreground">{savedAddress?.city}, {savedAddress?.zip_code}</p>
                                 <p className="text-muted-foreground mt-2">Phone: {savedAddress?.phone}</p>
                             </div>
                         )}
@@ -326,22 +463,22 @@ const CheckoutPage = () => {
                     <RadioGroup value={paymentMethod} onValueChange={(v) => setPaymentMethod(v as any)} className="space-y-3">
                         <div className={`flex items-center space-x-3 border p-4 rounded-lg cursor-pointer ${paymentMethod === 'card' ? 'border-primary ring-1 ring-primary' : ''}`}>
                             <RadioGroupItem value="card" id="card" />
-                            <Label htmlFor="card" className="flex-grow cursor-pointer flex items-center gap-3"><div className="p-2 bg-blue-100 text-blue-600 rounded-full"><CreditCard className="h-5 w-5" /></div><span className="font-medium">Card (Razorpay)</span></Label>
+                            <Label htmlFor="card" className="flex-grow cursor-pointer flex items-center gap-3"><CreditCard className="h-5 w-5 text-blue-600" /> Card (Razorpay)</Label>
                         </div>
                         <div className={`flex items-center space-x-3 border p-4 rounded-lg cursor-pointer ${paymentMethod === 'upi' ? 'border-primary ring-1 ring-primary' : ''}`}>
                             <RadioGroupItem value="upi" id="upi" />
-                            <Label htmlFor="upi" className="flex-grow cursor-pointer flex items-center gap-3"><div className="p-2 bg-green-100 text-green-600 rounded-full"><Wallet className="h-5 w-5" /></div><span className="font-medium">UPI (Razorpay)</span></Label>
+                            <Label htmlFor="upi" className="flex-grow cursor-pointer flex items-center gap-3"><Wallet className="h-5 w-5 text-green-600" /> UPI (Razorpay)</Label>
                         </div>
                         <div className={`flex items-center space-x-3 border p-4 rounded-lg cursor-pointer ${paymentMethod === 'cod' ? 'border-primary ring-1 ring-primary' : ''}`}>
                             <RadioGroupItem value="cod" id="cod" />
-                            <Label htmlFor="cod" className="flex-grow cursor-pointer flex items-center gap-3"><div className="p-2 bg-orange-100 text-orange-600 rounded-full"><Banknote className="h-5 w-5" /></div><span className="font-medium">Cash on Delivery</span></Label>
+                            <Label htmlFor="cod" className="flex-grow cursor-pointer flex items-center gap-3"><Banknote className="h-5 w-5 text-orange-600" /> Cash on Delivery</Label>
                         </div>
                     </RadioGroup>
                 </CardContent>
             </Card>
           </div>
 
-          {/* Right Column */}
+          {/* Summary Column */}
           <div className="lg:col-span-1">
             <Card className="sticky top-24">
               <CardHeader><CardTitle>Order Summary</CardTitle></CardHeader>
