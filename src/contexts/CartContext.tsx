@@ -7,6 +7,7 @@ interface ProductDetails {
   price: number;
   images: string[];
   description?: string;
+  retailer_id?: string; // <--- ADDED THIS! Critical for splitting orders.
 }
 
 interface CartItem {
@@ -43,10 +44,10 @@ export const CartProvider = ({ children }: { children: ReactNode }) => {
 
   const addToCart = async (productId: string | number, quantity = 1) => {
     try {
-        // 1. Fetch the REAL product details from Supabase
+        // 1. Fetch product AND retailer_id from Supabase
         const { data: product, error } = await supabase
             .from('products')
-            .select('*')
+            .select('*, retailer_id') // Explicitly selecting retailer_id helps verify it exists
             .eq('id', productId)
             .single();
 
@@ -67,7 +68,7 @@ export const CartProvider = ({ children }: { children: ReactNode }) => {
                 newCart[existingIndex].quantity += quantity;
                 return newCart;
             } else {
-                // Add new item with FETCHED details (No more Demo Item)
+                // Add new item WITH retailer_id
                 return [...prev, { 
                     id: crypto.randomUUID(), 
                     product_id: productId, 
@@ -76,13 +77,13 @@ export const CartProvider = ({ children }: { children: ReactNode }) => {
                         name: product.name, 
                         price: product.price, 
                         images: product.images || ['/placeholder.svg'],
-                        description: product.description
+                        description: product.description,
+                        retailer_id: product.retailer_id // <--- SAVING IT HERE
                     }
                 }];
             }
         });
 
-        // 3. Show a better notification
         toast.success(`${product.name} added to cart`, {
             description: `You have ${quantity} in your cart.`,
             duration: 3000,

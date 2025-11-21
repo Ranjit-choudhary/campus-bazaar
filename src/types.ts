@@ -1,7 +1,13 @@
 // src/types.ts
 
-// This 'Product' interface matches your Supabase table
-// and the one needed by AdminDashboard.tsx
+export interface Retailer {
+    id: string;
+    name: string;
+    email: string;
+    city: string;
+    latitude?: number;  // Added
+    longitude?: number; // Added
+}
 export interface Product {
   id: string;
   name: string;
@@ -14,7 +20,7 @@ export interface Product {
   tag?: string | null;
   wholesaler_stock?: number | null; 
   
-  // Existing
+  retailer?: Retailer;
   stock?: number;
   retailer_id?: string | null;
   wholesaler_id?: string | null;

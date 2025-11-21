@@ -5,7 +5,7 @@ import { supabase } from '@/lib/supabase';
 import { useCart } from '@/contexts/CartContext';
 import Navbar from '@/components/Navbar';
 import { Button } from '@/components/ui/button';
-import { ArrowLeft, ShoppingCart, Send, Package, Store, Star } from 'lucide-react';
+import { ArrowLeft, ShoppingCart, Send, Package, Store, Star, Bell, Tag } from 'lucide-react'; // Added Bell, Tag
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Textarea } from '@/components/ui/textarea';
 import { Label } from '@/components/ui/label';
@@ -13,6 +13,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
 import { Separator } from '@/components/ui/separator';
+import { Badge } from '@/components/ui/badge'; // Added Badge
 
 // Interface for Feedback matching Supabase table
 interface Feedback {
@@ -23,7 +24,6 @@ interface Feedback {
   content: string;
   rating?: number;
   created_at: string;
-  // We will fetch user email/metadata if possible, or fallback
   user_email?: string;
 }
 
@@ -43,6 +43,9 @@ const ProductDetailPage = () => {
   const [newRating, setNewRating] = useState<number>(5);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [user, setUser] = useState<any>(null);
+
+  // Notify Me State
+  const [notified, setNotified] = useState(false);
 
   // Function to fetch feedback from Supabase
   const fetchFeedback = async (prodId: string) => {
@@ -64,7 +67,7 @@ const ProductDetailPage = () => {
       if (!productId) return;
       setLoading(true);
 
-      // 1. Fetch Product & Retailer from Supabase
+      // 1. Fetch Product, Retailer, AND Theme from Supabase
       const { data: foundProduct, error } = await supabase
         .from('products')
         .select(`
@@ -73,6 +76,9 @@ const ProductDetailPage = () => {
                 name,
                 rating,
                 description
+            ),
+            themes (
+                name
             )
         `)
         .eq('id', productId)
@@ -80,7 +86,6 @@ const ProductDetailPage = () => {
 
       if (error || !foundProduct) {
         console.error('Error fetching product:', error);
-        // navigate('/not-found'); // Optional: redirect on error
         setLoading(false);
         return;
       }
@@ -120,7 +125,6 @@ const ProductDetailPage = () => {
 
     setIsSubmitting(true);
     
-    // Insert into Supabase
     const { error } = await supabase
       .from('product_feedback')
       .insert({
@@ -133,7 +137,7 @@ const ProductDetailPage = () => {
 
     if (error) {
       console.error("Submission error:", error);
-      if (error.code === '23505') { // Unique violation code
+      if (error.code === '23505') {
           toast.error("You have already submitted feedback for this product.");
       } else {
           toast.error("Failed to submit. Please try again.");
@@ -142,10 +146,19 @@ const ProductDetailPage = () => {
       toast.success(`${newFeedbackType === 'feedback' ? 'Feedback' : 'Query'} submitted successfully!`);
       setNewFeedbackContent('');
       setNewRating(5);
-      // Refresh feedback list
       await fetchFeedback(product.id);
     }
     setIsSubmitting(false);
+  };
+
+  const handleNotifyMe = () => {
+      if (notified) return;
+      
+      // Here you would typically save the notification request to a database
+      toast.success("We'll notify you!", {
+          description: "You will receive an email when this item is back in stock."
+      });
+      setNotified(true);
   };
 
   if (loading) {
@@ -171,7 +184,6 @@ const ProductDetailPage = () => {
     });
   }
   
-  // Calculate Average Rating from fetched data
   const ratings = feedbackList
     .filter(f => f.type === 'feedback' && f.rating)
     .map(f => f.rating as number);
@@ -180,7 +192,6 @@ const ProductDetailPage = () => {
     ? (ratings.reduce((a, b) => a + b, 0) / ratings.length).toFixed(1) 
     : null;
 
-  // Stock Status Logic
   let stockStatus = null;
   if (product.stock === 0) {
       stockStatus = <span className="text-destructive font-semibold flex items-center gap-2"><Package className="h-4 w-4"/> Out of Stock</span>;
@@ -199,9 +210,8 @@ const ProductDetailPage = () => {
           Back
         </Button>
         
-        {/* Product Details Section */}
         <div className="grid grid-cols-1 md:grid-cols-2 gap-8 lg:gap-12 mb-12">
-          {/* Product Images Gallery */}
+          {/* Images */}
           <div>
             <Card className="overflow-hidden border-none shadow-none">
               <CardContent className="p-0">
@@ -229,20 +239,29 @@ const ProductDetailPage = () => {
             </div>
           </div>
 
-          {/* Product Details */}
+          {/* Details */}
           <div className="flex flex-col">
             <h1 className="text-4xl font-bold text-foreground mb-2">{product.name}</h1>
             
-            {/* Retailer Info */}
-            {retailer && (
-                <div className="flex items-center gap-2 text-sm text-muted-foreground mb-4">
-                    <Store className="h-4 w-4" />
-                    <span>Sold by <span className="font-semibold text-foreground hover:underline cursor-pointer">{retailer.name}</span></span>
-                    <span className="text-yellow-500 flex items-center gap-1">★ {retailer.rating}</span>
-                </div>
-            )}
+            {/* Theme and Retailer Info */}
+            <div className="flex flex-wrap items-center gap-3 mb-4">
+                {product.themes && (
+                    <Badge variant="secondary" className="flex items-center gap-1 px-3 py-1 text-sm">
+                        <Tag className="h-3 w-3" />
+                        {product.themes.name} Theme
+                    </Badge>
+                )}
+                
+                {retailer && (
+                    <div className="flex items-center gap-2 text-sm text-muted-foreground border-l pl-3 ml-1">
+                        <Store className="h-4 w-4" />
+                        <span>Sold by <span className="font-semibold text-foreground">{retailer.name}</span></span>
+                        <span className="text-yellow-500 flex items-center gap-1">★ {retailer.rating}</span>
+                    </div>
+                )}
+            </div>
 
-            {/* Product Rating Display */}
+            {/* Rating */}
             <div className="flex items-center gap-2 mb-6">
                 {averageRating ? (
                     <>
@@ -263,22 +282,27 @@ const ProductDetailPage = () => {
 
             <p className="text-3xl font-semibold text-primary mb-4">₹{product.price}</p>
             
-            {/* Stock Status Display */}
             <div className="mb-6">
                 {stockStatus}
             </div>
 
             <p className="text-muted-foreground mb-8 flex-grow text-lg leading-relaxed">{product.description}</p>
             
+            {/* Actions - "Add to Cart" or "Notify Me" */}
             <div className="flex items-center gap-4 mt-auto">
               <Button 
                 size="lg" 
                 className="w-full md:w-auto text-lg py-6" 
-                onClick={() => addToCart(product.id)}
-                disabled={product.stock === 0}
+                onClick={() => product.stock === 0 ? handleNotifyMe() : addToCart(product.id)}
+                variant={product.stock === 0 ? "outline" : "default"}
+                disabled={product.stock === 0 && notified}
               >
-                <ShoppingCart className="mr-2 h-5 w-5" />
-                {product.stock === 0 ? 'Notify Me' : 'Add to Cart'}
+                {product.stock === 0 ? (
+                    <Bell className={cn("mr-2 h-5 w-5", notified && "fill-current")} />
+                ) : (
+                    <ShoppingCart className="mr-2 h-5 w-5" />
+                )}
+                {product.stock === 0 ? (notified ? 'Notified' : 'Notify Me') : 'Add to Cart'}
               </Button>
             </div>
           </div>
@@ -286,12 +310,11 @@ const ProductDetailPage = () => {
 
         <Separator className="my-12" />
 
-        {/* Feedback and Queries Section */}
+        {/* Feedback Section */}
         <div className="mt-8 max-w-4xl">
           <h2 className="text-3xl font-bold text-foreground mb-6">Feedback & Queries</h2>
           
           <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
-            {/* Submission Form */}
             <div className="lg:col-span-1">
               <Card>
                 <CardHeader>
@@ -358,7 +381,6 @@ const ProductDetailPage = () => {
               </Card>
             </div>
 
-            {/* Display List */}
             <div className="lg:col-span-2 space-y-4">
               {feedbackList.length > 0 ? (
                 feedbackList.map((item) => (
@@ -386,7 +408,6 @@ const ProductDetailPage = () => {
                         </div>
                         <p className="text-sm text-foreground mb-3">{item.content}</p>
                         <div className="text-right text-xs text-muted-foreground font-medium">
-                            {/* Displaying truncated User ID as privacy fallback */}
                             — User {item.user_id.substring(0, 6)}...
                         </div>
                     </CardContent>

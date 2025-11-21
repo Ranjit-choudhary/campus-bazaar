@@ -3,28 +3,34 @@ import { TooltipProvider } from "@/components/ui/tooltip";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { BrowserRouter, Routes, Route } from "react-router-dom";
 import { CartProvider } from "@/contexts/CartContext";
+import { LocationProvider } from "@/contexts/LocationContext"; 
+
+// Pages
 import Index from "./pages/Index";
 import LoginPage from "./pages/LoginPage";
 import AdminLoginPage from "./pages/AdminLogin";
 import ShopAll from "./pages/ShopAll";
-import { LocationProvider } from "@/contexts/LocationContext"; 
 import AllThemes from "./pages/AllThemes";
 import ThemePage from "./pages/ThemePage";
 import ProductDetailPage from "./pages/ProductDetailPage";
-import AdminDashboard from "./pages/AdminDashboard";
-import RetailerDashboard from "./pages/RetailerDashboard";
-import WholesalerDashboard from "./pages/WholesalerDashboard";
-import RetailerPaymentPage from "./pages/RetailerPaymentPage"; // Import new page
+import SearchResults from "./pages/SearchResults";
 import Cart from "./pages/Cart";
 import CheckoutPage from "./pages/CheckoutPage";
-import OrderPage from "./pages/OrderPage";
+import OrderPage from "./pages/OrderPage"; // Ensure this handles single orders
 import Profile from "./pages/Profile";
+import ProfilePage from "./pages/ProfilePage"; // Check which profile page you are using
 import HelpPage from "./pages/HelpPage";
 import ReturnPolicyPage from "./pages/ReturnPolicyPage";
 import TermsAndConditionsPage from "./pages/TermsAndConditionsPage";
 import NotFound from "./pages/NotFound";
+
+// Dashboards
+import AdminDashboard from "./pages/AdminDashboard";
+import RetailerDashboard from "./pages/RetailerDashboard";
+import WholesalerDashboard from "./pages/WholesalerDashboard";
+import RetailerPaymentPage from "./pages/RetailerPaymentPage"; 
+
 import ProtectedRoute from "./components/ProtectedRoute";
-import SearchResults from "./pages/SearchResults";
 
 const queryClient = new QueryClient();
 
@@ -45,14 +51,13 @@ const App = () => (
             <Route path="/product/:productId" element={<ProductDetailPage />} />
             <Route path="/search" element={<SearchResults />} />
             
-            {/* Protected Routes */}
+            {/* Protected Dashboards */}
             <Route path="/admin/dashboard" element={
               <ProtectedRoute role="admin"><AdminDashboard /></ProtectedRoute>
             } />
             <Route path="/retailer/dashboard" element={
               <ProtectedRoute role="retailer"><RetailerDashboard /></ProtectedRoute>
             } />
-            {/* New Route for Retailer Payment */}
             <Route path="/retailer/payment" element={
               <ProtectedRoute role="retailer"><RetailerPaymentPage /></ProtectedRoute>
             } />
@@ -60,10 +65,14 @@ const App = () => (
               <ProtectedRoute role="wholesaler"><WholesalerDashboard /></ProtectedRoute>
             } />
 
+            {/* Shopping Flow */}
             <Route path="/cart" element={<Cart />} />
             <Route path="/checkout" element={<CheckoutPage />} />
-            <Route path="/orders" element={<OrderPage />} />
-            <Route path="/profile" element={<Profile />} />
+            
+            {/* FIXED: Added dynamic route for Order Confirmation */}
+            <Route path="/order/:orderId" element={<OrderPage />} /> 
+            
+            <Route path="/profile" element={<ProfilePage />} /> {/* Switched to ProfilePage as likely intended */}
             <Route path="/help" element={<HelpPage />} />
             <Route path="/return-policy" element={<ReturnPolicyPage />} />
             <Route path="/terms" element={<TermsAndConditionsPage />} />

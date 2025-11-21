@@ -2,14 +2,21 @@ import { createContext, useContext, useState, useEffect, ReactNode } from 'react
 import { supabase } from '../lib/supabase';
 import { toast } from 'sonner';
 
-// Configuration
 const GOOGLE_MAPS_API_KEY = import.meta.env.VITE_GOOGLE_MAPS_API_KEY || "";
+
+interface UserLocation {
+    lat: number;
+    lng: number;
+}
 
 interface LocationContextType {
   userCity: string | null;
   setUserCity: (city: string | null) => void;
+  userLocation: UserLocation | null; // Added
   isLoadingLocation: boolean;
-  detectBrowserLocation: () => Promise<void>; // New function exposed to components
+  error: string | null; // Added
+  detectBrowserLocation: () => Promise<void>;
+  calculateDistance: (lat1: number, lon1: number, lat2: number, lon2: number) => number; // Added
 }
 
 const LocationContext = createContext<LocationContextType | undefined>(undefined);
@@ -24,20 +31,35 @@ export const useLocation = () => {
 
 export const LocationProvider = ({ children }: { children: ReactNode }) => {
   const [userCity, setUserCity] = useState<string | null>(null);
+  const [userLocation, setUserLocation] = useState<UserLocation | null>(null);
   const [isLoadingLocation, setIsLoadingLocation] = useState(true);
+  const [error, setError] = useState<string | null>(null);
 
-  // Helper: Convert Lat/Lng to City Name using Google API
+  // Haversine Formula to calculate distance in km
+  const calculateDistance = (lat1: number, lon1: number, lat2: number, lon2: number): number => {
+    const R = 6371; // Radius of the earth in km
+    const dLat = deg2rad(lat2 - lat1);
+    const dLon = deg2rad(lon2 - lon1);
+    const a =
+      Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+      Math.cos(deg2rad(lat1)) * Math.cos(deg2rad(lat2)) *
+      Math.sin(dLon / 2) * Math.sin(dLon / 2);
+    const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+    return R * c; // Distance in km
+  };
+
+  const deg2rad = (deg: number) => {
+    return deg * (Math.PI / 180);
+  };
+
   const getCityFromCoords = async (lat: number, lng: number): Promise<string | null> => {
     try {
         if (!GOOGLE_MAPS_API_KEY) return null;
-        
         const response = await fetch(
             `https://maps.googleapis.com/maps/api/geocode/json?latlng=${lat},${lng}&key=${GOOGLE_MAPS_API_KEY}`
         );
         const data = await response.json();
-        
         if (data.status === 'OK' && data.results?.[0]) {
-            // Look for 'locality' (City) or 'administrative_area_level_2' (District)
             for (const component of data.results[0].address_components) {
                 if (component.types.includes('locality')) {
                     return component.long_name;
@@ -51,82 +73,61 @@ export const LocationProvider = ({ children }: { children: ReactNode }) => {
     }
   };
 
-  // Main logic to determine location
   const detectBrowserLocation = async () => {
       if (!navigator.geolocation) {
-          toast.error("Geolocation is not supported by your browser");
+          const msg = "Geolocation is not supported by your browser";
+          toast.error(msg);
+          setError(msg);
           return;
       }
 
       setIsLoadingLocation(true);
+      setError(null);
       
       navigator.geolocation.getCurrentPosition(
           async (position) => {
-              const city = await getCityFromCoords(position.coords.latitude, position.coords.longitude);
+              const { latitude, longitude } = position.coords;
+              
+              // Set Coordinates
+              setUserLocation({ lat: latitude, lng: longitude });
+              
+              // Get City Name
+              const city = await getCityFromCoords(latitude, longitude);
               if (city) {
                   setUserCity(city);
                   localStorage.setItem('campus_bazaar_city', city);
                   toast.success(`Location detected: ${city}`);
-              } else {
-                  toast.error("Could not determine city from location.");
               }
               setIsLoadingLocation(false);
           },
-          (error) => {
-              console.warn("Geolocation denied/error:", error);
-              // Don't show error toast on auto-load, only if manually triggered
+          (err) => {
+              console.warn("Geolocation denied/error:", err);
+              setError("Location permission denied. Please enable it to see nearby products.");
               setIsLoadingLocation(false);
           }
       );
   };
 
   useEffect(() => {
-    const initLocation = async () => {
-      setIsLoadingLocation(true);
-      
-      // 1. Priority: Saved Address in Database
-      const { data: { session } } = await supabase.auth.getSession();
-      if (session?.user) {
-        const { data: address } = await supabase
-          .from('addresses')
-          .select('city')
-          .eq('user_id', session.user.id)
-          .single();
-
-        if (address?.city) {
-          setUserCity(address.city);
-          setIsLoadingLocation(false);
-          return;
-        }
-      }
-
-      // 2. Priority: Local Storage (Previous session)
-      const savedCity = localStorage.getItem('campus_bazaar_city');
-      if (savedCity) {
-        setUserCity(savedCity);
-        setIsLoadingLocation(false);
-        return;
-      }
-
-      // 3. Priority: Browser Geolocation (Auto-detect)
-      // We trigger this automatically if nothing else is found
-      await detectBrowserLocation();
-    };
-
-    initLocation();
+    detectBrowserLocation();
   }, []);
 
   const updateCity = (city: string | null) => {
     setUserCity(city);
-    if (city) {
-      localStorage.setItem('campus_bazaar_city', city);
-    } else {
-      localStorage.removeItem('campus_bazaar_city');
-    }
+    if (city) localStorage.setItem('campus_bazaar_city', city);
+    else localStorage.removeItem('campus_bazaar_city');
   };
 
   return (
-    <LocationContext.Provider value={{ userCity, setUserCity: updateCity, isLoadingLocation, detectBrowserLocation }}>
+    <LocationContext.Provider value={{ 
+        userCity, 
+        setUserCity: updateCity, 
+        userLocation, 
+        isLoadingLocation, 
+        error,
+        detectBrowserLocation,
+        calculateDistance
+    }}>
       {children}
     </LocationContext.Provider>
   );
