@@ -5,10 +5,11 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { Package, DollarSign, TrendingUp, Store, Truck, ShoppingCart, CheckCircle, XCircle } from 'lucide-react';
+import { Package, DollarSign, TrendingUp, Store, Truck, ShoppingCart, CheckCircle, XCircle, Edit, Save, X } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
 import { toast } from 'sonner';
 import { Badge } from '@/components/ui/badge';
+import { Input } from '@/components/ui/input'; // Import Input
 
 interface Wholesaler {
     id: string;
@@ -20,8 +21,8 @@ interface Wholesaler {
 interface Product {
     id: string;
     name: string;
-    price: number; // Retail price (Wholesalers might see this or a wholesale cost)
-    stock: number; // This could be "Global Stock" or just descriptive for the catalog
+    price: number;
+    stock: number;
     category: string;
 }
 
@@ -30,7 +31,7 @@ interface RestockOrder {
     created_at: string;
     quantity: number;
     status: string;
-    total_amount?: number; // derived
+    total_amount?: number;
     retailer?: {
         name: string;
         city: string;
@@ -47,6 +48,10 @@ const WholesalerDashboard = () => {
     const [myCatalog, setMyCatalog] = useState<Product[]>([]);
     const [incomingOrders, setIncomingOrders] = useState<RestockOrder[]>([]);
     const [loading, setLoading] = useState(true);
+    
+    // Stock Edit State
+    const [editingStockId, setEditingStockId] = useState<string | null>(null);
+    const [newStockValue, setNewStockValue] = useState<number>(0);
 
     useEffect(() => {
         const fetchWholesalerData = async () => {
@@ -70,23 +75,27 @@ const WholesalerDashboard = () => {
             if (wholesalerError || !wholesalerData) {
                 console.error("Wholesaler lookup failed", wholesalerError);
                 toast.error("Access Denied. You are not a registered wholesaler.");
-                navigate('/'); // Redirect to home or login
+                navigate('/'); 
                 setLoading(false);
                 return;
             }
 
             setWholesaler(wholesalerData);
 
-            // 2. Fetch My Catalog (Products I supply)
+            // 2. Fetch My Catalog
+            // We filter products that are linked to this wholesaler AND presumably are the "master" stock
+            // For this prototype, we assume any product with this wholesaler_id is part of their catalog to manage.
             const { data: catalogData } = await supabase
                 .from('products')
                 .select('*')
                 .eq('wholesaler_id', wholesalerData.id)
+                // We might want to filter out retailer-specific copies if they exist in the same table
+                // but for now, let's assume the wholesaler manages the 'source' products.
                 .order('name');
             
             setMyCatalog(catalogData || []);
 
-            // 3. Fetch Incoming Orders from Retailers
+            // 3. Fetch Incoming Orders
             const { data: ordersData } = await supabase
                 .from('restock_orders')
                 .select(`
@@ -118,6 +127,28 @@ const WholesalerDashboard = () => {
         }
     };
 
+    // Update Stock Function
+    const handleSaveStock = async (productId: string) => {
+        if (newStockValue < 0) {
+            toast.error("Stock cannot be negative");
+            return;
+        }
+
+        const { error } = await supabase
+            .from('products')
+            .update({ stock: newStockValue })
+            .eq('id', productId);
+
+        if (error) {
+            toast.error("Failed to update stock");
+            console.error(error);
+        } else {
+            toast.success("Stock updated successfully");
+            setMyCatalog(prev => prev.map(p => p.id === productId ? { ...p, stock: newStockValue } : p));
+            setEditingStockId(null);
+        }
+    };
+
     const getStatusBadge = (status: string) => {
         switch (status) {
             case 'paid': return <Badge className="bg-green-100 text-green-800 hover:bg-green-200">Paid - To Ship</Badge>;
@@ -128,10 +159,8 @@ const WholesalerDashboard = () => {
         }
     };
 
-    // Stats
     const totalProducts = myCatalog.length;
     const activeOrders = incomingOrders.filter(o => o.status !== 'delivered').length;
-    // Estimate revenue (Assuming 70% of retail price is wholesale revenue)
     const totalRevenue = incomingOrders
         .filter(o => o.status === 'paid' || o.status === 'shipped' || o.status === 'delivered')
         .reduce((acc, o) => acc + ((o.product?.price || 0) * 0.7 * o.quantity), 0);
@@ -188,7 +217,7 @@ const WholesalerDashboard = () => {
 
                 <Tabs defaultValue="catalog" className="w-full">
                     <TabsList className="mb-8">
-                        <TabsTrigger value="catalog">My Catalog</TabsTrigger>
+                        <TabsTrigger value="catalog">My Catalog & Inventory</TabsTrigger>
                         <TabsTrigger value="orders">Retailer Orders</TabsTrigger>
                     </TabsList>
 
@@ -196,7 +225,7 @@ const WholesalerDashboard = () => {
                         <Card>
                             <CardHeader>
                                 <CardTitle>Product Catalog</CardTitle>
-                                <CardDescription>Items you supply to the Campus Bazaar network.</CardDescription>
+                                <CardDescription>Manage your stock levels. Retailers buy from this inventory.</CardDescription>
                             </CardHeader>
                             <CardContent>
                                 <Table>
@@ -205,7 +234,8 @@ const WholesalerDashboard = () => {
                                             <TableHead>Product Name</TableHead>
                                             <TableHead>Category</TableHead>
                                             <TableHead>MSRP</TableHead>
-                                            <TableHead>Supply Price (Est. 70%)</TableHead>
+                                            <TableHead>Current Stock</TableHead>
+                                            <TableHead className="text-right">Actions</TableHead>
                                         </TableRow>
                                     </TableHeader>
                                     <TableBody>
@@ -214,7 +244,35 @@ const WholesalerDashboard = () => {
                                                 <TableCell className="font-medium">{product.name}</TableCell>
                                                 <TableCell className="capitalize">{product.category}</TableCell>
                                                 <TableCell>₹{product.price}</TableCell>
-                                                <TableCell className="text-green-600 font-medium">₹{Math.floor(product.price * 0.7)}</TableCell>
+                                                <TableCell>
+                                                    {editingStockId === product.id ? (
+                                                        <Input 
+                                                            type="number" 
+                                                            className="w-24 h-8" 
+                                                            value={newStockValue} 
+                                                            onChange={(e) => setNewStockValue(parseInt(e.target.value) || 0)}
+                                                        />
+                                                    ) : (
+                                                        <span className={product.stock < 20 ? "text-red-500 font-bold" : ""}>
+                                                            {product.stock} units
+                                                        </span>
+                                                    )}
+                                                </TableCell>
+                                                <TableCell className="text-right">
+                                                    {editingStockId === product.id ? (
+                                                        <div className="flex justify-end gap-2">
+                                                            <Button size="icon" variant="ghost" onClick={() => setEditingStockId(null)}><X className="h-4 w-4" /></Button>
+                                                            <Button size="icon" variant="ghost" className="text-green-600" onClick={() => handleSaveStock(product.id)}><Save className="h-4 w-4" /></Button>
+                                                        </div>
+                                                    ) : (
+                                                        <Button size="icon" variant="ghost" onClick={() => {
+                                                            setEditingStockId(product.id);
+                                                            setNewStockValue(product.stock);
+                                                        }}>
+                                                            <Edit className="h-4 w-4 text-blue-500" />
+                                                        </Button>
+                                                    )}
+                                                </TableCell>
                                             </TableRow>
                                         ))}
                                     </TableBody>
