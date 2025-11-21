@@ -6,7 +6,6 @@ import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/com
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Input } from '@/components/ui/input';
-// Added CheckCircle to imports
 import { Plus, Package, DollarSign, TrendingUp, Store, Search, Truck, ShoppingCart, Edit, Trash2, Users, Receipt, MessageSquare, User, CheckCircle } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
 import { toast } from 'sonner';
@@ -16,9 +15,6 @@ import { Label } from '@/components/ui/label';
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger } from "@/components/ui/alert-dialog";
 import { ScrollArea } from '@/components/ui/scroll-area';
 
-// ... (Rest of the file remains unchanged)
-
-// --- Interfaces ---
 interface Product {
   id: string;
   name: string;
@@ -82,8 +78,6 @@ interface FeedbackItem {
 
 const RetailerDashboard = () => {
   const navigate = useNavigate();
-  
-  // State Management
   const [inventory, setInventory] = useState<Product[]>([]);
   const [wholesaleProducts, setWholesaleProducts] = useState<Product[]>([]);
   const [orders, setOrders] = useState<RestockOrder[]>([]);
@@ -91,12 +85,10 @@ const RetailerDashboard = () => {
   const [retailer, setRetailer] = useState<Retailer | null>(null);
   const [loading, setLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState('');
-  
-  // UI State
   const [isAddProductOpen, setIsAddProductOpen] = useState(false);
   const [orderQuantities, setOrderQuantities] = useState<{[productId: string]: number}>({});
 
-  // Edit Product State
+  // Edit State
   const [editingProduct, setEditingProduct] = useState<Product | null>(null);
   const [isEditOpen, setIsEditOpen] = useState(false);
   const [editForm, setEditForm] = useState({ price: 0, stock: 0 });
@@ -107,7 +99,7 @@ const RetailerDashboard = () => {
   const [isFeedbackOpen, setIsFeedbackOpen] = useState(false);
   const [feedbackLoading, setFeedbackLoading] = useState(false);
 
-  // Customer History View State (NEW)
+  // Customer History View State
   const [viewCustomerHistory, setViewCustomerHistory] = useState<string | null>(null); 
   const [customerHistoryOpen, setCustomerHistoryOpen] = useState(false);
 
@@ -132,24 +124,24 @@ const RetailerDashboard = () => {
         .single();
 
       if (retailerError || !retailerData) {
-        console.error('Retailer lookup failed:', retailerError);
-        toast.error("Could not find a retailer account linked to this email.");
+        toast.error("Retailer account not found.");
         setLoading(false);
         return;
       }
-
       setRetailer(retailerData);
 
-      // 2. Fetch Current Inventory
+      // 2. Fetch Current Inventory (Retailer Specific)
+      // Only fetch items where retailer_id MATCHES this retailer
       const { data: inventoryData } = await supabase
         .from('products')
         .select('*')
-        .eq('retailer_id', retailerData.id) 
+        .eq('retailer_id', retailerData.id)
         .order('name');
       
       setInventory(inventoryData || []);
 
-      // 3. Fetch Wholesale Catalog
+      // 3. Fetch Wholesale Catalog (Master Products)
+      // Fetch items where retailer_id is NULL (These are the wholesaler's master copies)
       const { data: marketData } = await supabase
         .from('products')
         .select(`
@@ -160,6 +152,7 @@ const RetailerDashboard = () => {
                 location
             )
         `)
+        .is('retailer_id', null) // Fetch only master products
         .order('name');
         
       const mappedMarketData = (marketData || []).map((item: any) => ({
@@ -169,40 +162,26 @@ const RetailerDashboard = () => {
 
       setWholesaleProducts(mappedMarketData);
 
-      // 4. Fetch Supply Chain Orders
+      // 4. Fetch Orders
       const { data: ordersData } = await supabase
         .from('restock_orders')
-        .select(`
-            *,
-            product:product_id (name, price),
-            wholesaler:wholesaler_id (name)
-        `)
+        .select(`*, product:product_id (name, price), wholesaler:wholesaler_id (name)`)
         .eq('retailer_id', retailerData.id)
         .order('created_at', { ascending: false });
-
       setOrders(ordersData || []);
 
-      // 5. Fetch Customer Sales
-      const { data: salesData, error: salesError } = await supabase
+      // 5. Fetch Sales
+      const { data: salesData } = await supabase
         .from('customer_orders')
-        .select(`
-            *,
-            product:product_id (name)
-        `)
+        .select(`*, product:product_id (name)`)
         .eq('retailer_id', retailerData.id)
         .order('created_at', { ascending: false });
-      
-      if (!salesError) {
-          setCustomerSales(salesData || []);
-      }
+      setCustomerSales(salesData || []);
 
       setLoading(false);
     };
-
     fetchRetailerData();
   }, [navigate]);
-
-  // --- Handlers ---
 
   const handleQuantityChange = (productId: string, val: string) => {
       const num = parseInt(val);
@@ -211,7 +190,6 @@ const RetailerDashboard = () => {
       }
   };
 
-  // Navigates to payment page to complete restock order
   const handleRestock = (product: Product) => {
       if (!retailer) return;
       const qty = orderQuantities[product.id] || 10;
@@ -249,7 +227,7 @@ const RetailerDashboard = () => {
       navigate('/retailer/payment', { state: orderDetails });
   };
 
-  // Handles receiving a shipment from a wholesaler -> updates inventory
+  // --- HANDLE RECEIVE ORDER (Updated Logic) ---
   const handleReceiveOrder = async (order: RestockOrder) => {
       if (!retailer || order.status === 'delivered') return;
 
@@ -264,7 +242,7 @@ const RetailerDashboard = () => {
           return;
       }
 
-      // 2. Increase Retailer Inventory
+      // 2. INCREASE Retailer Inventory (Local Copy)
       const { data: existingProducts } = await supabase
           .from('products')
           .select('*')
@@ -274,6 +252,7 @@ const RetailerDashboard = () => {
       const existingProduct = existingProducts?.[0];
 
       if (existingProduct) {
+          // Update existing
           const newStock = (existingProduct.stock || 0) + order.quantity;
           await supabase
               .from('products')
@@ -283,7 +262,8 @@ const RetailerDashboard = () => {
           setInventory(prev => prev.map(p => p.id === existingProduct.id ? { ...p, stock: newStock } : p));
           toast.success(`Stock updated. New total: ${newStock}`);
       } else {
-           // If product not found in inventory (unlikely if restock flow creates it, but good safety)
+           // Insert new product (Copy from master)
+           // Use the product_id from the order to fetch master details
            const { data: sourceProduct } = await supabase
               .from('products')
               .select('*')
@@ -317,6 +297,8 @@ const RetailerDashboard = () => {
       setOrders(prev => prev.map(o => o.id === order.id ? { ...o, status: 'delivered' } : o));
   };
 
+  // ... (Rest of Dialog Openers and Handlers - Feedback, Customer History, Edit, Delete)
+
   const openFeedbackDialog = async (product: Product) => {
       setViewFeedbackProduct(product);
       setIsFeedbackOpen(true);
@@ -330,7 +312,6 @@ const RetailerDashboard = () => {
 
       if (error) {
           console.error("Error fetching feedback:", error);
-          toast.error("Failed to load feedback.");
       } else {
           setProductFeedback(data || []);
       }
@@ -382,7 +363,6 @@ const RetailerDashboard = () => {
       }
   };
 
-  // --- Stats & Filters ---
   const totalProducts = inventory.length;
   const lowStockItems = inventory.filter(p => p.stock < 10).length;
   const totalValue = inventory.reduce((acc, curr) => acc + (curr.price * curr.stock), 0);
@@ -422,8 +402,7 @@ const RetailerDashboard = () => {
             <p className="text-muted-foreground">{retailer?.city ? `📍 ${retailer.city} Branch` : 'Retailer Portal'}</p>
           </div>
           
-          {/* ADD PRODUCT DIALOG (Keep existing code) */}
-           <Dialog open={isAddProductOpen} onOpenChange={setIsAddProductOpen}>
+          <Dialog open={isAddProductOpen} onOpenChange={setIsAddProductOpen}>
             <DialogTrigger asChild>
                 <Button><Plus className="mr-2 h-4 w-4" /> Add / Restock Product</Button>
             </DialogTrigger>
@@ -431,11 +410,16 @@ const RetailerDashboard = () => {
                 <div className="p-6 border-b">
                     <DialogHeader>
                         <DialogTitle>Wholesale Marketplace</DialogTitle>
-                        <DialogDescription>Browse products from approved wholesalers. Enter quantity to order.</DialogDescription>
+                        <DialogDescription>Browse products from approved wholesalers.</DialogDescription>
                     </DialogHeader>
                     <div className="flex items-center gap-4 mt-4">
                         <Search className="h-4 w-4 text-muted-foreground" />
-                        <Input placeholder="Search catalog..." value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)} className="flex-1" />
+                        <Input 
+                            placeholder="Search catalog..." 
+                            value={searchQuery} 
+                            onChange={(e) => setSearchQuery(e.target.value)} 
+                            className="flex-1" 
+                        />
                     </div>
                 </div>
                 <div className="flex-1 overflow-auto p-6">
@@ -475,7 +459,7 @@ const RetailerDashboard = () => {
                                         <TableCell className="font-bold">{qty > 0 ? `₹${(qty * wholesalePrice).toLocaleString()}` : '-'}</TableCell>
                                         <TableCell>
                                             <Button size="sm" onClick={() => handleRestock({...product, price: wholesalePrice})} disabled={!qty || qty <= 0}>
-                                                Proceed to Pay
+                                                Order
                                             </Button>
                                         </TableCell>
                                     </TableRow>
@@ -488,7 +472,6 @@ const RetailerDashboard = () => {
           </Dialog>
         </div>
 
-        {/* EDIT DIALOG (Keep existing code) */}
         <Dialog open={isEditOpen} onOpenChange={setIsEditOpen}>
             <DialogContent>
                 <DialogHeader>
@@ -524,7 +507,6 @@ const RetailerDashboard = () => {
             </DialogContent>
         </Dialog>
 
-        {/* FEEDBACK DIALOG (NEW) */}
         <Dialog open={isFeedbackOpen} onOpenChange={setIsFeedbackOpen}>
             <DialogContent className="max-w-3xl max-h-[80vh] flex flex-col">
                 <DialogHeader>
@@ -558,7 +540,6 @@ const RetailerDashboard = () => {
             </DialogContent>
         </Dialog>
         
-        {/* CUSTOMER HISTORY DIALOG (NEW) */}
         <Dialog open={customerHistoryOpen} onOpenChange={setCustomerHistoryOpen}>
             <DialogContent className="max-w-4xl h-[80vh] flex flex-col">
                 <DialogHeader>
@@ -595,7 +576,6 @@ const RetailerDashboard = () => {
             </DialogContent>
         </Dialog>
 
-        {/* --- TABS --- */}
         <Tabs defaultValue="inventory" className="w-full">
             <TabsList className="mb-8">
                 <TabsTrigger value="inventory">My Inventory</TabsTrigger>
@@ -605,7 +585,6 @@ const RetailerDashboard = () => {
             </TabsList>
 
             <TabsContent value="inventory">
-                {/* Stats Row */}
                 <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
                     <Card>
                         <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
@@ -630,7 +609,6 @@ const RetailerDashboard = () => {
                     </Card>
                 </div>
                 
-                {/* Inventory Table */}
                 <Card>
                     <CardHeader><CardTitle>Current Inventory</CardTitle><CardDescription>Manage prices, stock, and view customer feedback.</CardDescription></CardHeader>
                     <CardContent>
@@ -686,6 +664,7 @@ const RetailerDashboard = () => {
             </TabsContent>
 
             <TabsContent value="sales">
+                {/* Sales Table Content */}
                  <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
                     <Card>
                         <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
@@ -754,7 +733,7 @@ const RetailerDashboard = () => {
             </TabsContent>
 
             <TabsContent value="restock">
-                {/* (Reused Wholesale Market Component from previous step) */}
+                {/* Restock Tab Content */}
                 <Card>
                     <CardHeader>
                         <CardTitle>Wholesale Market</CardTitle>
@@ -820,7 +799,6 @@ const RetailerDashboard = () => {
             </TabsContent>
 
             <TabsContent value="orders">
-                {/* (Reused Orders Component from previous step) */}
                 <Card>
                     <CardHeader><CardTitle>Supply Chain Orders</CardTitle><CardDescription>Track payment status and deliveries.</CardDescription></CardHeader>
                     <CardContent>

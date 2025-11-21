@@ -58,12 +58,11 @@ const RetailerPaymentPage = () => {
     const handlePayment = async () => {
         setIsProcessing(true);
         
-        // 1. Check Wholesaler Stock
-        // We need to fetch the specific row that belongs to the wholesaler to check THEIR stock
+        // 1. Check Wholesaler Stock (on master product)
         const { data: sourceProduct } = await supabase
             .from('products')
             .select('stock')
-            .eq('id', product.id) // Assuming product.id passed is the wholesaler's product ID
+            .eq('id', product.id)
             .single();
             
         if (sourceProduct && sourceProduct.stock < quantity) {
@@ -125,7 +124,7 @@ const RetailerPaymentPage = () => {
                         The order has been sent to <strong>{wholesaler.name}</strong>.
                         <br/><br/>
                         <span className="text-sm bg-yellow-100 text-yellow-800 px-2 py-1 rounded">
-                            Note: Inventory will update once you mark the order as "Received" in your dashboard.
+                            Action Required: Wait for shipment, then mark order as "Received" in dashboard to update your stock.
                         </span>
                     </p>
                     <Button onClick={() => navigate('/retailer/dashboard')}>
