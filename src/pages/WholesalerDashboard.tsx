@@ -5,18 +5,20 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { Package, DollarSign, TrendingUp, Truck, ShoppingCart, CheckCircle, Edit, Save, X, Mail, MapPin } from 'lucide-react';
+import { Package, Truck, Edit, Save, X, Mail, MapPin, Plus, Image as ImageIcon } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
 import { toast } from 'sonner';
 import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
 import { ScrollArea } from '@/components/ui/scroll-area';
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger, DialogFooter } from "@/components/ui/dialog";
+import { Label } from '@/components/ui/label';
+import { Textarea } from '@/components/ui/textarea';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 
 // 1. Update Interface to match the JOIN result structure
 interface RetailerStockInfo {
     stock: number;
-    // We use 'retailers' (plural) here because that matches the table name usually, 
-    // but we'll alias it in the query if needed.
     retailers: {
         name: string;
         email: string;
@@ -31,6 +33,7 @@ interface Product {
     stock: number;
     wholesaler_stock: number;
     category: string;
+    description?: string;
     retailersWithStock?: RetailerStockInfo[];
 }
 
@@ -46,6 +49,8 @@ interface RestockOrder {
     created_at: string;
     quantity: number;
     status: string;
+    retailer_id: string; // Added ID
+    product_id: string;  // Added ID
     retailer?: {
         name: string;
         city: string;
@@ -64,6 +69,20 @@ const WholesalerDashboard = () => {
     const [loading, setLoading] = useState(true);
     const [editingStockId, setEditingStockId] = useState<string | null>(null);
     const [newStockValue, setNewStockValue] = useState<number>(0);
+
+    // Add Product State
+    const [isAddOpen, setIsAddOpen] = useState(false);
+    const [isAdding, setIsAdding] = useState(false);
+    const [newProduct, setNewProduct] = useState({
+        name: '',
+        price: '',
+        category: 'general',
+        description: '',
+        image: '',
+        wholesaler_stock: ''
+    });
+
+    const categories = ['mugs', 'posters', 'decor', 'lighting', 'tech', 'toys', 'general'];
 
     useEffect(() => {
         const fetchWholesalerData = async () => {
@@ -91,50 +110,7 @@ const WholesalerDashboard = () => {
             setWholesaler(wholesalerData);
 
             // 2. Fetch Catalog & Distributed Stock
-            try {
-                // A. Get MASTER products (owned by Central Warehouse 'ret-1')
-                const { data: masterData } = await supabase
-                    .from('products')
-                    .select('*')
-                    .eq('wholesaler_id', wholesalerData.id)
-                    .eq('retailer_id', 'ret-1') 
-                    .order('name');
-
-                // B. Get RETAILER copies (owned by actual retailers)
-                // IMPORTANT: We use !retailer_id to force the foreign key join
-                const { data: distData } = await supabase
-                    .from('products')
-                    .select(`
-                        name,
-                        stock,
-                        retailers!retailer_id (
-                            name,
-                            email,
-                            city
-                        )
-                    `)
-                    .eq('wholesaler_id', wholesalerData.id)
-                    .neq('retailer_id', 'ret-1'); 
-
-                // C. Merge Logic
-                const combinedCatalog = (masterData || []).map((masterItem) => {
-                    // Find all instances of this product held by retailers
-                    const holders = (distData || []).filter((d: any) => 
-                        d.name === masterItem.name && d.retailers
-                    );
-                    
-                    return {
-                        ...masterItem,
-                        retailersWithStock: holders
-                    };
-                });
-
-                setMyCatalog(combinedCatalog);
-
-            } catch (error) {
-                console.error("Catalog fetch error:", error);
-                toast.error("Could not load catalog.");
-            }
+            await loadCatalog(wholesalerData.id);
 
             // 3. Fetch Orders
             const { data: ordersData } = await supabase
@@ -154,13 +130,120 @@ const WholesalerDashboard = () => {
         fetchWholesalerData();
     }, [navigate]);
 
-    const handleUpdateStatus = async (orderId: string, newStatus: string) => {
-        const { error } = await supabase.from('restock_orders').update({ status: newStatus }).eq('id', orderId);
-        if (error) toast.error("Update failed");
-        else {
-            toast.success(`Order updated to ${newStatus}`);
-            setIncomingOrders(prev => prev.map(o => o.id === orderId ? { ...o, status: newStatus } : o));
+    const loadCatalog = async (wholesalerId: string) => {
+        try {
+            // A. Get MASTER products (owned by Central Warehouse 'ret-1')
+            const { data: masterData } = await supabase
+                .from('products')
+                .select('*')
+                .eq('wholesaler_id', wholesalerId)
+                .eq('retailer_id', 'ret-1') 
+                .order('name');
+
+            // B. Get RETAILER copies (owned by actual retailers)
+            const { data: distData } = await supabase
+                .from('products')
+                .select(`
+                    name,
+                    stock,
+                    retailers!retailer_id (
+                        name,
+                        email,
+                        city
+                    )
+                `)
+                .eq('wholesaler_id', wholesalerId)
+                .neq('retailer_id', 'ret-1'); 
+
+            // C. Merge Logic
+            const combinedCatalog = (masterData || []).map((masterItem) => {
+                const holders = (distData || []).filter((d: any) => 
+                    d.name === masterItem.name && d.retailers
+                );
+                
+                return {
+                    ...masterItem,
+                    retailersWithStock: holders
+                };
+            });
+
+            setMyCatalog(combinedCatalog);
+
+        } catch (error) {
+            console.error("Catalog fetch error:", error);
+            toast.error("Could not load catalog.");
         }
+    };
+
+    const handleUpdateStatus = async (orderId: string, newStatus: string) => {
+        // 1. Update Status in DB
+        const { error } = await supabase.from('restock_orders').update({ status: newStatus }).eq('id', orderId);
+        
+        if (error) {
+            toast.error("Update failed");
+            return;
+        }
+
+        toast.success(`Order updated to ${newStatus}`);
+
+        // 2. Handle Delivery Logic (Transfer Stock ownership/Create Retailer Copy)
+        if (newStatus === 'delivered') {
+            const order = incomingOrders.find(o => o.id === orderId);
+            if (order && wholesaler) {
+                try {
+                    // Fetch Master Product to get details
+                    const { data: masterProduct } = await supabase
+                        .from('products')
+                        .select('*')
+                        .eq('id', order.product_id)
+                        .single();
+
+                    if (masterProduct) {
+                        // Check if Retailer already has a copy of this product
+                        const { data: existingCopy } = await supabase
+                            .from('products')
+                            .select('*')
+                            .eq('retailer_id', order.retailer_id)
+                            .eq('name', masterProduct.name) // Matching by name effectively links them
+                            .maybeSingle();
+
+                        if (existingCopy) {
+                            // Update existing retailer stock
+                            const newStock = (existingCopy.stock || 0) + order.quantity;
+                            await supabase.from('products')
+                                .update({ stock: newStock, in_stock: newStock > 0 })
+                                .eq('id', existingCopy.id);
+                        } else {
+                            // Create new retailer product copy
+                            const newId = `ret-prod-${Date.now()}-${Math.floor(Math.random() * 1000)}`;
+                            await supabase.from('products').insert({
+                                id: newId,
+                                name: masterProduct.name,
+                                price: masterProduct.price,
+                                category: masterProduct.category,
+                                description: masterProduct.description,
+                                images: masterProduct.images,
+                                theme_id: masterProduct.theme_id,
+                                wholesaler_id: wholesaler.id,
+                                wholesaler_stock: 0, // Retailer copy doesn't have wholesaler stock
+                                retailer_id: order.retailer_id,
+                                stock: order.quantity,
+                                in_stock: true
+                            });
+                        }
+                        toast.success("Inventory transferred to Retailer.");
+                        // Reload catalog to update the "Distribution" view
+                        loadCatalog(wholesaler.id);
+                    }
+                } catch (e) {
+                    console.error("Delivery logic error:", e);
+                    toast.error("Status updated, but failed to transfer stock.");
+                }
+            }
+        }
+
+        // Update local state
+        setIncomingOrders(prev => prev.map(o => o.id === orderId ? { ...o, status: newStatus } : o));
     };
 
     const handleSaveStock = async (productId: string) => {
@@ -179,6 +262,53 @@ const WholesalerDashboard = () => {
         }
     };
 
+    const handleAddNewProduct = async () => {
+        if (!wholesaler) return;
+        if (!newProduct.name || !newProduct.price || !newProduct.wholesaler_stock) {
+            toast.error("Please fill in all required fields.");
+            return;
+        }
+
+        setIsAdding(true);
+        try {
+            // Create a unique ID
+            const newId = `prod-${Date.now()}-${Math.floor(Math.random() * 1000)}`;
+            
+            const { error } = await supabase.from('products').insert({
+                id: newId,
+                name: newProduct.name,
+                price: parseFloat(newProduct.price),
+                category: newProduct.category,
+                description: newProduct.description,
+                images: newProduct.image ? [newProduct.image] : ['/placeholder.svg'],
+                
+                // CRITICAL: Associate with Wholesaler & set Stock
+                wholesaler_id: wholesaler.id,
+                wholesaler_stock: parseInt(newProduct.wholesaler_stock),
+                
+                // IMPORTANT: Set retailer_id to 'ret-1' so it appears as a Master Item
+                retailer_id: 'ret-1',
+                stock: 0, // No local retailer stock yet
+                in_stock: parseInt(newProduct.wholesaler_stock) > 0 // FIX: Changed from inStock to in_stock
+            });
+
+            if (error) throw error;
+
+            toast.success("Product added to Master Catalog!");
+            setIsAddOpen(false);
+            setNewProduct({ name: '', price: '', category: 'general', description: '', image: '', wholesaler_stock: '' });
+            
+            // Refresh Catalog
+            await loadCatalog(wholesaler.id);
+
+        } catch (error: any) {
+            console.error("Add product error:", error);
+            toast.error(error.message || "Failed to add product");
+        } finally {
+            setIsAdding(false);
+        }
+    };
+
     const getStatusBadge = (status: string) => {
         switch (status) {
             case 'paid': return <Badge className="bg-green-100 text-green-800">Paid - To Ship</Badge>;
@@ -194,9 +324,76 @@ const WholesalerDashboard = () => {
         <div className="min-h-screen bg-background">
             <Navbar />
             <div className="container mx-auto px-4 py-8">
-                <h1 className="text-3xl font-bold mb-8 flex items-center gap-2">
-                    <Truck className="h-8 w-8 text-orange-600" /> {wholesaler?.name} Portal
-                </h1>
+                <div className="flex justify-between items-center mb-8">
+                    <h1 className="text-3xl font-bold flex items-center gap-2">
+                        <Truck className="h-8 w-8 text-orange-600" /> {wholesaler?.name} Portal
+                    </h1>
+                    <Dialog open={isAddOpen} onOpenChange={setIsAddOpen}>
+                        <DialogTrigger asChild>
+                            <Button className="gap-2">
+                                <Plus className="h-4 w-4" /> Add New Product
+                            </Button>
+                        </DialogTrigger>
+                        <DialogContent className="sm:max-w-[500px]">
+                            <DialogHeader>
+                                <DialogTitle>Add to Master Catalog</DialogTitle>
+                                <DialogDescription>
+                                    Add a new item to your wholesale offering. This will be visible to all retailers.
+                                </DialogDescription>
+                            </DialogHeader>
+                            <div className="grid gap-4 py-4">
+                                <div className="grid gap-2">
+                                    <Label htmlFor="name">Product Name *</Label>
+                                    <Input id="name" value={newProduct.name} onChange={e => setNewProduct({...newProduct, name: e.target.value})} placeholder="e.g., Ceramic Vase" />
+                                </div>
+                                <div className="grid grid-cols-2 gap-4">
+                                    <div className="grid gap-2">
+                                        <Label htmlFor="price">Unit Price (₹) *</Label>
+                                        <Input id="price" type="number" value={newProduct.price} onChange={e => setNewProduct({...newProduct, price: e.target.value})} placeholder="0.00" />
+                                    </div>
+                                    <div className="grid gap-2">
+                                        <Label htmlFor="stock">Initial Stock *</Label>
+                                        <Input id="stock" type="number" value={newProduct.wholesaler_stock} onChange={e => setNewProduct({...newProduct, wholesaler_stock: e.target.value})} placeholder="0" />
+                                    </div>
+                                </div>
+                                <div className="grid gap-2">
+                                    <Label htmlFor="category">Category</Label>
+                                    <Select value={newProduct.category} onValueChange={(val) => setNewProduct({...newProduct, category: val})}>
+                                        <SelectTrigger>
+                                            <SelectValue placeholder="Select category" />
+                                        </SelectTrigger>
+                                        <SelectContent>
+                                            {categories.map(c => (
+                                                <SelectItem key={c} value={c}>{c.charAt(0).toUpperCase() + c.slice(1)}</SelectItem>
+                                            ))}
+                                        </SelectContent>
+                                    </Select>
+                                </div>
+                                <div className="grid gap-2">
+                                    <Label htmlFor="image">Image URL</Label>
+                                    <div className="flex gap-2">
+                                        <Input id="image" value={newProduct.image} onChange={e => setNewProduct({...newProduct, image: e.target.value})} placeholder="https://..." />
+                                        {newProduct.image && (
+                                            <div className="h-10 w-10 rounded border overflow-hidden shrink-0">
+                                                <img src={newProduct.image} alt="Preview" className="h-full w-full object-cover" onError={(e) => (e.currentTarget.style.display = 'none')} />
+                                            </div>
+                                        )}
+                                    </div>
+                                </div>
+                                <div className="grid gap-2">
+                                    <Label htmlFor="desc">Description</Label>
+                                    <Textarea id="desc" value={newProduct.description} onChange={e => setNewProduct({...newProduct, description: e.target.value})} placeholder="Product details..." />
+                                </div>
+                            </div>
+                            <DialogFooter>
+                                <Button variant="outline" onClick={() => setIsAddOpen(false)}>Cancel</Button>
+                                <Button onClick={handleAddNewProduct} disabled={isAdding}>
+                                    {isAdding ? 'Adding...' : 'Add Product'}
+                                </Button>
+                            </DialogFooter>
+                        </DialogContent>
+                    </Dialog>
+                </div>
 
                 <Tabs defaultValue="catalog" className="w-full">
                     <TabsList className="mb-8">
@@ -224,13 +421,16 @@ const WholesalerDashboard = () => {
                                     <TableBody>
                                         {myCatalog.map((product) => (
                                             <TableRow key={product.id}>
-                                                <TableCell className="font-medium">{product.name}</TableCell>
+                                                <TableCell>
+                                                    <div className="font-medium">{product.name}</div>
+                                                    <div className="text-xs text-muted-foreground">{product.category}</div>
+                                                </TableCell>
                                                 <TableCell>₹{product.price}</TableCell>
                                                 
                                                 {/* Master Stock Cell */}
                                                 <TableCell>
                                                     {editingStockId === product.id ? (
-                                                        <Input type="number" className="w-20 h-8" value={newStockValue} onChange={(e) => setNewStockValue(parseInt(e.target.value)||0)} />
+                                                        <Input type="number" className="w-24 h-8" value={newStockValue} onChange={(e) => setNewStockValue(parseInt(e.target.value)||0)} />
                                                     ) : (
                                                         <span className={(product.wholesaler_stock || 0) < 20 ? "text-red-500 font-bold" : ""}>
                                                             {product.wholesaler_stock || 0} units

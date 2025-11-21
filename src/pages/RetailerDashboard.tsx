@@ -6,7 +6,7 @@ import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/com
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Input } from '@/components/ui/input';
-import { Plus, Package, DollarSign, TrendingUp, Store, Search, Truck, ShoppingCart, Edit, Trash2, Users, Receipt, MessageSquare, User, CheckCircle } from 'lucide-react';
+import { Plus, Package, DollarSign, TrendingUp, Store, Search, Truck, ShoppingCart, Edit, Trash2, Users, Receipt, MessageSquare, User, CheckCircle, AlertCircle } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
 import { toast } from 'sonner';
 import { Badge } from '@/components/ui/badge';
@@ -14,6 +14,8 @@ import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, Di
 import { Label } from '@/components/ui/label';
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger } from "@/components/ui/alert-dialog";
 import { ScrollArea } from '@/components/ui/scroll-area';
+import { Textarea } from '@/components/ui/textarea';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 
 // Types defined locally for completeness
 interface Product {
@@ -21,7 +23,7 @@ interface Product {
   name: string;
   price: number;
   stock: number;            // Retailer's local stock
-  wholesaler_stock?: number; // Wholesaler's master stock
+  wholesaler_stock?: number; // Wholesaler's master stock (Derived)
   category: string;
   in_stock: boolean;
   description?: string;
@@ -33,6 +35,11 @@ interface Product {
       location: string;
       id?: string;
   }
+}
+
+interface Theme {
+    id: string;
+    name: string;
 }
 
 interface Retailer {
@@ -48,6 +55,7 @@ interface RestockOrder {
     quantity: number;
     status: string;
     product_id: string;
+    wholesaler_id?: string; // Ensure we track who fulfilled this
     product?: {
         name: string;
         price: number;
@@ -82,6 +90,7 @@ const RetailerDashboard = () => {
   const navigate = useNavigate();
   const [inventory, setInventory] = useState<Product[]>([]);
   const [wholesaleProducts, setWholesaleProducts] = useState<Product[]>([]);
+  const [themes, setThemes] = useState<Theme[]>([]);
   const [orders, setOrders] = useState<RestockOrder[]>([]);
   const [customerSales, setCustomerSales] = useState<CustomerOrder[]>([]);
   const [retailer, setRetailer] = useState<Retailer | null>(null);
@@ -93,7 +102,14 @@ const RetailerDashboard = () => {
   // Edit State
   const [editingProduct, setEditingProduct] = useState<Product | null>(null);
   const [isEditOpen, setIsEditOpen] = useState(false);
-  const [editForm, setEditForm] = useState({ price: 0, stock: 0 });
+  const [editForm, setEditForm] = useState({ 
+      price: 0, 
+      stock: 0,
+      description: '',
+      category: '',
+      image: '',
+      theme_id: 'none' // Default to 'none' string for Select component compatibility
+  });
 
   // Feedback & History State
   const [viewFeedbackProduct, setViewFeedbackProduct] = useState<Product | null>(null);
@@ -124,21 +140,11 @@ const RetailerDashboard = () => {
       }
       setRetailer(retailerData);
 
-      // 2. Fetch Retailer Inventory
-      // Matches items owned by THIS retailer. Uses 'stock' column.
-      const { data: inventoryData } = await supabase
-        .from('products')
-        .select('*')
-        .eq('retailer_id', retailerData.id)
-        .order('name');
-      setInventory(inventoryData || []);
-
-      // 3. Fetch Wholesale Marketplace
-      // Matches items owned by 'ret-1' (Central/Master). Uses 'wholesaler_stock' column.
+      // 2. Fetch Wholesale Marketplace (Master Catalog)
       const { data: marketData } = await supabase
         .from('products')
         .select(`*, wholesalers:wholesaler_id (id, name, location)`)
-        .eq('retailer_id', 'ret-1') // Central Store / Master Catalog
+        .eq('retailer_id', 'ret-1') 
         .order('name');
         
       const mappedMarketData = (marketData || []).map((item: any) => ({
@@ -147,12 +153,43 @@ const RetailerDashboard = () => {
       }));
       setWholesaleProducts(mappedMarketData);
 
+      // 3. Fetch Retailer Inventory
+      const { data: inventoryData } = await supabase
+        .from('products')
+        .select(`
+            *,
+            wholesaler:wholesaler_id ( name, location )
+        `)
+        .eq('retailer_id', retailerData.id)
+        .order('name');
+      
+      // Map inventory to include wholesaler stock from marketData
+      const enrichedInventory = (inventoryData || []).map((item: any) => {
+          const masterItem = mappedMarketData.find(m => 
+              m.name === item.name && 
+              (!item.wholesaler_id || m.wholesaler_id === item.wholesaler_id)
+          );
+
+          return {
+              ...item,
+              wholesaler: item.wholesaler || (masterItem ? masterItem.wholesaler : null),
+              wholesaler_stock: masterItem ? masterItem.wholesaler_stock : 0,
+              wholesaler_id: item.wholesaler_id || (masterItem ? masterItem.wholesaler_id : undefined)
+          };
+      });
+
+      setInventory(enrichedInventory);
+
       // 4. Fetch Orders & Sales
       const { data: ordersData } = await supabase.from('restock_orders').select(`*, product:product_id (name, price), wholesaler:wholesaler_id (name)`).eq('retailer_id', retailerData.id).order('created_at', { ascending: false });
       setOrders(ordersData || []);
 
       const { data: salesData } = await supabase.from('customer_orders').select(`*, product:product_id (name)`).eq('retailer_id', retailerData.id).order('created_at', { ascending: false });
       setCustomerSales(salesData || []);
+
+      // 5. Fetch Themes for Dropdown
+      const { data: themesData } = await supabase.from('themes').select('id, name');
+      setThemes(themesData || []);
 
       setLoading(false);
     };
@@ -168,10 +205,13 @@ const RetailerDashboard = () => {
       if (!retailer) return;
       const qty = orderQuantities[product.id] || 10;
       
-      if (!product.wholesaler_id || !product.wholesaler) {
-          toast.error("No wholesaler linked.");
+      if (!product.wholesaler_id) {
+          toast.error("No wholesaler linked to this product.");
           return;
       }
+
+      const wholesalerName = product.wholesaler?.name || 'Unknown Wholesaler';
+      const wholesalerLocation = product.wholesaler?.location || '';
 
       const orderDetails = {
           product: {
@@ -185,8 +225,8 @@ const RetailerDashboard = () => {
           },
           wholesaler: {
               id: product.wholesaler_id, 
-              name: product.wholesaler.name,
-              location: product.wholesaler.location
+              name: wholesalerName,
+              location: wholesalerLocation
           },
           retailer: {
               id: retailer.id,
@@ -207,46 +247,55 @@ const RetailerDashboard = () => {
       const { error: statusError } = await supabase.from('restock_orders').update({ status: 'delivered' }).eq('id', order.id);
       if (statusError) { toast.error("Failed to update status."); return; }
 
-      // Increase Retailer Inventory (Local 'stock')
-      // We check if we already have this product from the marketplace in our inventory
+      // Increase Retailer Inventory
       const { data: existingProducts } = await supabase
         .from('products')
         .select('*')
         .eq('retailer_id', retailer.id)
-        .eq('name', order.product?.name); // Matching by name is a simple check, ideally use a 'master_product_id' link if available
+        .eq('name', order.product?.name)
+        .eq('wholesaler_id', order.wholesaler_id);
       
       const existingProduct = existingProducts?.[0];
 
       if (existingProduct) {
           const newStock = (existingProduct.stock || 0) + order.quantity;
           await supabase.from('products').update({ stock: newStock }).eq('id', existingProduct.id);
+          
           setInventory(prev => prev.map(p => p.id === existingProduct.id ? { ...p, stock: newStock } : p));
           toast.success(`Stock updated. New total: ${newStock}`);
       } else {
-           // Create new inventory item for retailer based on the master product
-           const { data: sourceProduct } = await supabase.from('products').select('*').eq('id', order.product_id).single();
-           if (sourceProduct) {
-               const newId = `ret-prod-${Date.now()}-${Math.floor(Math.random()*1000)}`;
-               const { error: insertError } = await supabase.from('products').insert({
+          // New Product Entry
+          const { data: sourceProduct } = await supabase.from('products').select('*').eq('id', order.product_id).single();
+          
+          if (sourceProduct) {
+              const newId = `ret-prod-${Date.now()}-${Math.floor(Math.random()*1000)}`;
+              const newProductEntry = {
                    id: newId,
                    name: sourceProduct.name,
-                   price: sourceProduct.price, // Retailer can change this later
+                   price: sourceProduct.price,
                    description: sourceProduct.description,
                    category: sourceProduct.category,
                    theme_id: sourceProduct.theme_id,
                    retailer_id: retailer.id,
-                   stock: order.quantity, // Initial stock from order
+                   stock: order.quantity,
                    in_stock: true,
                    images: sourceProduct.images,
-                   wholesaler_id: sourceProduct.wholesaler_id
-               });
-               if (!insertError) {
-                   toast.success("New product added to your inventory.");
-                   // Refresh inventory to show new item
-                   const { data: newInv } = await supabase.from('products').select('*').eq('retailer_id', retailer.id).order('name');
-                   if (newInv) setInventory(newInv);
-               }
-           }
+                   wholesaler_id: order.wholesaler_id
+              };
+
+              const { error: insertError } = await supabase.from('products').insert(newProductEntry);
+              
+              if (!insertError) {
+                  toast.success("New product entry created.");
+                  const { data: wholesalerDetails } = await supabase.from('wholesalers').select('name, location').eq('id', order.wholesaler_id).single();
+                  
+                  setInventory(prev => [...prev, { 
+                      ...newProductEntry, 
+                      wholesaler: wholesalerDetails || undefined,
+                      wholesaler_stock: sourceProduct.wholesaler_stock 
+                  }]);
+              }
+          }
       }
       setOrders(prev => prev.map(o => o.id === order.id ? { ...o, status: 'delivered' } : o));
   };
@@ -258,16 +307,55 @@ const RetailerDashboard = () => {
   };
 
   const openEditDialog = (product: Product) => {
-      setEditingProduct(product); setEditForm({ price: product.price, stock: product.stock }); setIsEditOpen(true);
+      setEditingProduct(product); 
+      setEditForm({ 
+          price: product.price, 
+          stock: product.stock,
+          description: product.description || '',
+          category: product.category || '',
+          image: product.images?.[0] || '',
+          // FIX: Use 'none' string if theme_id is null/undefined to satisfy Select.Item value prop requirement
+          theme_id: product.theme_id || 'none'
+      }); 
+      setIsEditOpen(true);
   };
 
   const handleUpdateProduct = async () => {
       if (!editingProduct) return;
-      const { error } = await supabase.from('products').update({ price: editForm.price, stock: editForm.stock, in_stock: editForm.stock > 0 }).eq('id', editingProduct.id);
+      
+      const updatedImages = editForm.image ? [editForm.image] : editingProduct.images;
+
+      // FIX: Convert 'none' back to null for database storage
+      const themeIdToSave = (editForm.theme_id === 'none' || !editForm.theme_id) ? null : editForm.theme_id;
+
+      const updatePayload = { 
+          price: editForm.price, 
+          stock: editForm.stock, 
+          in_stock: editForm.stock > 0,
+          description: editForm.description,
+          category: editForm.category,
+          images: updatedImages,
+          theme_id: themeIdToSave
+      };
+
+      const { error } = await supabase
+        .from('products')
+        .update(updatePayload)
+        .eq('id', editingProduct.id);
+
       if (!error) {
-          toast.success("Updated!");
-          setInventory(prev => prev.map(p => p.id === editingProduct.id ? { ...p, price: editForm.price, stock: editForm.stock, in_stock: editForm.stock > 0 } : p));
+          toast.success("Product details updated!");
+          setInventory(prev => prev.map(p => p.id === editingProduct.id ? { 
+              ...p, 
+              ...updatePayload,
+              // Ensure we store the actual string or undefined in local state, though the DB has null
+              theme_id: themeIdToSave || undefined,
+              images: updatedImages
+          } : p));
           setIsEditOpen(false);
+      } else {
+          console.error("Update failed:", error);
+          toast.error(`Failed to update: ${error.message}`);
       }
   };
 
@@ -306,7 +394,7 @@ const RetailerDashboard = () => {
           <h1 className="text-3xl font-bold flex items-center gap-2"><Store className="h-8 w-8 text-primary" /> {retailer?.name} Dashboard</h1>
           
           <Dialog open={isAddProductOpen} onOpenChange={setIsAddProductOpen}>
-            <DialogTrigger asChild><Button><Plus className="mr-2 h-4 w-4" /> Add / Restock</Button></DialogTrigger>
+            <DialogTrigger asChild><Button><Plus className="mr-2 h-4 w-4" /> Browse Marketplace</Button></DialogTrigger>
             <DialogContent className="max-w-5xl h-[85vh] flex flex-col p-0">
                 <div className="p-6 border-b">
                     <DialogHeader><DialogTitle>Wholesale Marketplace</DialogTitle><DialogDescription>Order stock from wholesalers.</DialogDescription></DialogHeader>
@@ -333,7 +421,6 @@ const RetailerDashboard = () => {
                                         <TableCell><div>{product.name}</div><div className="text-xs text-muted-foreground">{product.category}</div></TableCell>
                                         <TableCell>{product.wholesaler?.name}</TableCell>
                                         <TableCell>₹{wholesalePrice}</TableCell>
-                                        {/* Display Wholesaler Stock */}
                                         <TableCell>
                                             <span className={(product.wholesaler_stock || 0) < 20 ? "text-orange-600 font-bold" : "text-green-600"}>
                                                 {product.wholesaler_stock || 0}
@@ -353,13 +440,48 @@ const RetailerDashboard = () => {
 
         {/* Edit Dialog */}
         <Dialog open={isEditOpen} onOpenChange={setIsEditOpen}>
-            <DialogContent>
-                <DialogHeader><DialogTitle>Edit Product</DialogTitle></DialogHeader>
+            <DialogContent className="sm:max-w-[500px]">
+                <DialogHeader><DialogTitle>Edit Product</DialogTitle><DialogDescription>Update product details and inventory.</DialogDescription></DialogHeader>
                 <div className="grid gap-4 py-4">
-                    <div className="grid grid-cols-4 items-center gap-4"><Label className="text-right">Price</Label><Input type="number" value={editForm.price} onChange={(e) => setEditForm({...editForm, price: Number(e.target.value)})} className="col-span-3" /></div>
-                    <div className="grid grid-cols-4 items-center gap-4"><Label className="text-right">Stock</Label><Input type="number" value={editForm.stock} onChange={(e) => setEditForm({...editForm, stock: Number(e.target.value)})} className="col-span-3" /></div>
+                    <div className="grid grid-cols-4 items-center gap-4">
+                        <Label className="text-right">Price</Label>
+                        <Input type="number" value={editForm.price} onChange={(e) => setEditForm({...editForm, price: Number(e.target.value)})} className="col-span-3" />
+                    </div>
+                    <div className="grid grid-cols-4 items-center gap-4">
+                        <Label className="text-right">Stock</Label>
+                        <Input type="number" value={editForm.stock} onChange={(e) => setEditForm({...editForm, stock: Number(e.target.value)})} className="col-span-3" />
+                    </div>
+                    <div className="grid grid-cols-4 items-center gap-4">
+                        <Label className="text-right">Category</Label>
+                        <Input value={editForm.category} onChange={(e) => setEditForm({...editForm, category: e.target.value})} className="col-span-3" />
+                    </div>
+                    {/* THEME SELECTOR FIX: Use 'none' as value instead of empty string */}
+                    <div className="grid grid-cols-4 items-center gap-4">
+                        <Label className="text-right">Theme</Label>
+                        <div className="col-span-3">
+                            <Select value={editForm.theme_id} onValueChange={(val) => setEditForm({...editForm, theme_id: val})}>
+                                <SelectTrigger>
+                                    <SelectValue placeholder="Select a theme" />
+                                </SelectTrigger>
+                                <SelectContent>
+                                    <SelectItem value="none">No Theme</SelectItem> 
+                                    {themes.map(t => (
+                                        <SelectItem key={t.id} value={t.id}>{t.name}</SelectItem>
+                                    ))}
+                                </SelectContent>
+                            </Select>
+                        </div>
+                    </div>
+                    <div className="grid grid-cols-4 items-start gap-4">
+                        <Label className="text-right mt-2">Description</Label>
+                        <Textarea value={editForm.description} onChange={(e) => setEditForm({...editForm, description: e.target.value})} className="col-span-3 min-h-[100px]" />
+                    </div>
+                    <div className="grid grid-cols-4 items-center gap-4">
+                        <Label className="text-right">Image URL</Label>
+                        <Input value={editForm.image} onChange={(e) => setEditForm({...editForm, image: e.target.value})} className="col-span-3" />
+                    </div>
                 </div>
-                <DialogFooter><Button onClick={handleUpdateProduct}>Save</Button></DialogFooter>
+                <DialogFooter><Button onClick={handleUpdateProduct}>Save Changes</Button></DialogFooter>
             </DialogContent>
         </Dialog>
 
@@ -402,18 +524,63 @@ const RetailerDashboard = () => {
                 <Card><CardHeader><CardTitle>Inventory</CardTitle></CardHeader>
                     <CardContent>
                         <Table>
-                            <TableHeader><TableRow><TableHead>Name</TableHead><TableHead>Price</TableHead><TableHead>Stock</TableHead><TableHead className="text-right">Actions</TableHead></TableRow></TableHeader>
-                            <TableBody>{inventory.map(p => (
-                                <TableRow key={p.id}>
-                                    <TableCell>{p.name}</TableCell><TableCell>₹{p.price}</TableCell>
-                                    <TableCell>{p.stock}</TableCell>
-                                    <TableCell className="text-right flex justify-end gap-2">
-                                        <Button variant="outline" size="icon" onClick={() => openFeedbackDialog(p)}><MessageSquare className="h-4 w-4" /></Button>
-                                        <Button variant="ghost" size="icon" onClick={() => openEditDialog(p)}><Edit className="h-4 w-4" /></Button>
-                                        <AlertDialog><AlertDialogTrigger asChild><Button variant="ghost" size="icon"><Trash2 className="h-4 w-4 text-red-500" /></Button></AlertDialogTrigger><AlertDialogContent><AlertDialogFooter><AlertDialogAction onClick={() => handleDeleteProduct(p.id)}>Delete</AlertDialogAction></AlertDialogFooter></AlertDialogContent></AlertDialog>
-                                    </TableCell>
+                            <TableHeader>
+                                <TableRow>
+                                    <TableHead>Name</TableHead>
+                                    <TableHead>Source (Wholesaler)</TableHead>
+                                    <TableHead>Price</TableHead>
+                                    <TableHead>Retailer Stock</TableHead>
+                                    <TableHead>Wholesaler Availability</TableHead>
+                                    <TableHead className="text-right">Actions</TableHead>
                                 </TableRow>
-                            ))}</TableBody>
+                            </TableHeader>
+                            <TableBody>{inventory.map(p => {
+                                const isLowStock = p.stock < 10;
+                                const qty = orderQuantities[p.id] || 0;
+                                return (
+                                    <TableRow key={p.id} className={isLowStock ? "bg-red-50 hover:bg-red-100" : ""}>
+                                        <TableCell>
+                                            <div className="font-medium flex items-center gap-2">
+                                                {p.name}
+                                                {isLowStock && <AlertCircle className="h-4 w-4 text-red-500" />}
+                                            </div>
+                                            <div className="text-xs text-muted-foreground">{p.category}</div>
+                                        </TableCell>
+                                        <TableCell>
+                                            <div className="text-sm">{p.wholesaler?.name || 'Unknown'}</div>
+                                            <div className="text-xs text-muted-foreground">{p.wholesaler?.location}</div>
+                                        </TableCell>
+                                        <TableCell>₹{p.price}</TableCell>
+                                        <TableCell>
+                                            <span className={isLowStock ? "text-red-600 font-bold" : ""}>{p.stock}</span>
+                                        </TableCell>
+                                        <TableCell>
+                                            <span className="text-muted-foreground">{p.wholesaler_stock ?? 'N/A'} units</span>
+                                        </TableCell>
+                                        <TableCell className="text-right">
+                                            <div className="flex justify-end items-center gap-2">
+                                                {isLowStock && (
+                                                    <div className="flex items-center gap-1 mr-4">
+                                                        <Input 
+                                                            type="number" 
+                                                            className="w-16 h-8" 
+                                                            placeholder="Qty" 
+                                                            value={qty || ''} 
+                                                            onChange={(e) => handleQuantityChange(p.id, e.target.value)}
+                                                        />
+                                                        <Button size="sm" variant="default" className="h-8" onClick={() => handleRestock(p)} disabled={!qty}>
+                                                            Restock
+                                                        </Button>
+                                                    </div>
+                                                )}
+                                                <Button variant="outline" size="icon" onClick={() => openFeedbackDialog(p)}><MessageSquare className="h-4 w-4" /></Button>
+                                                <Button variant="ghost" size="icon" onClick={() => openEditDialog(p)}><Edit className="h-4 w-4" /></Button>
+                                                <AlertDialog><AlertDialogTrigger asChild><Button variant="ghost" size="icon"><Trash2 className="h-4 w-4 text-red-500" /></Button></AlertDialogTrigger><AlertDialogContent><AlertDialogFooter><AlertDialogAction onClick={() => handleDeleteProduct(p.id)}>Delete</AlertDialogAction></AlertDialogFooter></AlertDialogContent></AlertDialog>
+                                            </div>
+                                        </TableCell>
+                                    </TableRow>
+                                );
+                            })}</TableBody>
                         </Table>
                     </CardContent>
                 </Card>
