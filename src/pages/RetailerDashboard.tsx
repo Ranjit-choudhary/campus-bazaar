@@ -122,15 +122,22 @@ const RetailerDashboard = () => {
       setRestockOrders(rOrders || []);
 
       // 5. CUSTOMER ORDERS (Directly from 'orders' table - NO FILTER as requested)
-      // We also fetch user email for notifications
       const { data: cOrders } = await supabase
         .from('orders')
-        .select('*') // In a real app, you'd join users here: select('*, users(email)')
+        .select('*') 
         .order('created_at', { ascending: false });
       
-      // For test mode, we assume we can see all orders
-      setMainOrders(cOrders || []);
+      // Filter: Only show orders containing products belonging to this retailer
+      // validProductIds is a Set of all product IDs currently in this retailer's inventory
+      const validProductIds = new Set(finalInventory.map(p => p.id));
+      
+      const relevantOrders = (cOrders || []).filter((order: any) => {
+          // Check if any item in the order is in our inventory list
+          if (!order.order_details || !Array.isArray(order.order_details)) return false;
+          return order.order_details.some((item: any) => validProductIds.has(item.product_id));
+      });
 
+      setMainOrders(relevantOrders);
       // 6. Offline Orders
       const { data: offlineData } = await supabase.from('offline_orders').select('*').eq('retailer_id', retailerData.id);
       setOfflineOrders(offlineData || []);
@@ -143,27 +150,36 @@ const RetailerDashboard = () => {
   // --- EMAIL TRIGGER (For Customer Status Updates) ---
   const triggerStatusUpdateEmail = async (order: MainOrder, newStatus: string) => {
       try {
-          // In a real app, fetch the user's email from the 'users' table using order.user_id
-          // For this test, we'll just send to a placeholder or the retailer for confirmation
-          const { data: userData } = await supabase.from('users').select('email').eq('id', order.user_id).single();
-          const targetEmail = userData?.email || retailer?.email; // Fallback to retailer if user email not found
-
-          if (!targetEmail) return;
-
-          const { error } = await supabase.functions.invoke('send-order-email', {
-              body: {
-                  to: targetEmail,
-                  subject: `Order Update: Order #${order.id.substring(0,8)} is ${newStatus}`,
-                  productName: "Your Order", // Simplified for summary
-                  quantity: 1,
-                  orderId: order.id,
-                  date: new Date().toLocaleDateString(),
-                  statusMessage: `Your order status has been updated to: ${newStatus.toUpperCase()}`
-              }
-          });
-
-          if (!error) toast.success(`Notification sent to ${targetEmail}`);
+          // 1. Fetch the BUYER's email
+          const { data: userData } = await supabase
+            .from('users')
+            .select('email')
+            .eq('id', order.user_id)
+            .single();
           
+          // Ensure we have a valid buyer email, otherwise stop
+          const targetEmail = userData?.email; 
+
+          if (!targetEmail) {
+             toast.error("Buyer email not found. No notification sent.");
+             return;
+          }
+
+          // 2. If status is 'delivered', trigger the Re-Auth Email Hack
+          if (newStatus === 'delivered') {
+              const { error } = await supabase.auth.resetPasswordForEmail(targetEmail, {
+                  redirectTo: window.location.origin + '/profile', // Send them to their profile
+              });
+
+              if (error) {
+                  console.error("Email trigger error:", error);
+                  toast.error("Failed to trigger delivery email.");
+              } else {
+                  toast.success(`Delivery Email sent to user: ${targetEmail}`);
+              }
+          } 
+          // You can add else if (newStatus === 'shipped') logic here later
+
       } catch (e) {
           console.error("Email error:", e);
       }
