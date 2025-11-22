@@ -1,25 +1,44 @@
 import { Card, CardContent } from './ui/card';
 import { Button } from './ui/button';
 import { Badge } from './ui/badge';
-import { ShoppingCart } from 'lucide-react';
+import { ShoppingCart, MapPin, Calendar } from 'lucide-react'; // Added Calendar icon
 import { useNavigate } from 'react-router-dom';
 
 interface ProductCardProps {
-  id: string | number; // Allow string IDs since our new data uses strings
+  id: string | number;
   name: string;
   price: number;
   image: string;
   tag?: string;
-  retailerName?: string; // New Prop
-  stock?: number;        // New Prop
+  retailerName?: string;
+  stock?: number;
+  distance?: number | null;
+  deliveryDate?: string | null; // New Prop
   onAddToCart: () => void;
+  onClick?: () => void;
 }
 
-const ProductCard = ({ id, name, price, image, tag, retailerName, stock, onAddToCart }: ProductCardProps) => {
+const ProductCard = ({ 
+  id, 
+  name, 
+  price, 
+  image, 
+  tag, 
+  retailerName, 
+  stock, 
+  distance, 
+  deliveryDate, // Destructure new prop
+  onAddToCart,
+  onClick 
+}: ProductCardProps) => {
   const navigate = useNavigate();
 
   const handleCardClick = () => {
-    navigate(`/product/${id}`);
+    if (onClick) {
+      onClick();
+    } else {
+      navigate(`/product/${id}`);
+    }
   };
 
   const handleAddToCartClick = (e: React.MouseEvent) => {
@@ -27,7 +46,6 @@ const ProductCard = ({ id, name, price, image, tag, retailerName, stock, onAddTo
     onAddToCart();
   };
 
-  // Determine stock status color/text
   let stockDisplay = null;
   if (stock !== undefined) {
     if (stock === 0) {
@@ -47,24 +65,39 @@ const ProductCard = ({ id, name, price, image, tag, retailerName, stock, onAddTo
           alt={name} 
           className="h-full w-full object-cover transition-transform duration-300 group-hover:scale-105" 
         />
+        
         {tag && (
           <Badge className="absolute top-2 right-2" variant={tag === 'hot' ? 'destructive' : 'default'}>
             {tag.charAt(0).toUpperCase() + tag.slice(1)}
           </Badge>
         )}
+
+        {distance != null && (
+          <div className="absolute top-2 left-2 bg-black/70 text-white text-[10px] px-2 py-1 rounded-full flex items-center gap-1 backdrop-blur-sm shadow-sm">
+            <MapPin className="h-3 w-3" />
+            {distance.toFixed(0)} km
+          </div>
+        )}
       </div>
+
       <CardContent className="p-4 flex flex-col flex-grow">
         <h3 className="font-semibold text-lg truncate" title={name}>{name}</h3>
         
-        {/* Retailer Name */}
         {retailerName && (
           <p className="text-xs text-muted-foreground mt-1 mb-2">
             Sold by <span className="text-blue-600 hover:underline">{retailerName}</span>
           </p>
         )}
 
-        {/* Price and Stock */}
         <div className="mt-auto">
+          {/* Delivery Date Display (Only if stock > 0) */}
+          {deliveryDate && stock !== 0 && (
+             <div className="flex items-center gap-1.5 mb-3 text-xs text-emerald-700 bg-emerald-50 p-1.5 rounded w-fit">
+                <Calendar className="h-3 w-3" />
+                <span>Available by {deliveryDate}</span>
+             </div>
+          )}
+
           <div className="flex items-baseline justify-between mb-2">
             <p className="text-primary font-bold text-xl">₹{price}</p>
             {stockDisplay}

@@ -30,7 +30,7 @@ const LoginPage = () => {
   const [isSignUp, setIsSignUp] = useState(false);
   const [useOtp, setUseOtp] = useState(false); 
   const [otpSent, setOtpSent] = useState(false);
-  const [timer, setTimer] = useState(0); // Resend timer
+  const [timer, setTimer] = useState(0); 
 
   // Onboarding/Signup State
   const [showOnboarding, setShowOnboarding] = useState(false);
@@ -68,7 +68,6 @@ const LoginPage = () => {
         .single();
 
       if (!profile || error) {
-        // Profile missing -> Show Onboarding
         setUserId(user.id);
         setUserEmail(user.email);
         setFullName(user.user_metadata?.full_name || ''); 
@@ -91,7 +90,6 @@ const LoginPage = () => {
     else navigate('/');
   };
 
-  // --- OTP LOGIC ---
   const handleSendOtp = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!email) {
@@ -104,7 +102,7 @@ const LoginPage = () => {
     const { error } = await supabase.auth.signInWithOtp({
       email: email,
       options: {
-        shouldCreateUser: true, // Allows new users to sign up via OTP
+        shouldCreateUser: true,
       }
     });
 
@@ -113,7 +111,7 @@ const LoginPage = () => {
     } else {
       toast.success('Code sent! Check your email.');
       setOtpSent(true);
-      setTimer(60); // Start 60s cooldown
+      setTimer(60); 
     }
     setIsLoading(false);
   };
@@ -126,7 +124,6 @@ const LoginPage = () => {
     }
     setIsLoading(true);
 
-    // Verify the 6-digit code
     const { data, error } = await supabase.auth.verifyOtp({
       email,
       token: otp,
@@ -138,13 +135,11 @@ const LoginPage = () => {
       setIsLoading(false);
     } else if (data.user) {
       toast.success('Verified successfully!');
-      // If session exists, check profile (will trigger onboarding if new user)
       if (data.session) {
         checkUserProfile(data.user);
       }
     }
   };
-  // ----------------
 
   const handlePasswordAuth = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -263,6 +258,12 @@ const LoginPage = () => {
     }
   };
 
+  const handleStartSignUp = (selectedRole: string) => {
+      setRole(selectedRole);
+      setIsSignUp(true);
+      setFullName('');
+  };
+
   const RoleSelection = () => (
     <div className="space-y-3">
         <Label className="text-base">I am a...</Label>
@@ -369,7 +370,7 @@ const LoginPage = () => {
                         onChange={(e) => setEmail(e.target.value)} 
                         required 
                         placeholder="m@example.com"
-                        disabled={otpSent} // Lock email after sending
+                        disabled={otpSent} 
                     />
                 </div>
                 
@@ -468,19 +469,46 @@ const LoginPage = () => {
 
           {!useOtp && (
             <div className="mt-6 text-center text-sm">
-                <span className="text-muted-foreground">
-                    {isSignUp ? "Already have an account? " : "Don't have an account? "}
-                </span>
-                <button 
-                    type="button" 
-                    className="text-primary hover:underline font-medium focus:outline-none"
-                    onClick={() => {
-                        setIsSignUp(!isSignUp);
-                        setFullName('');
-                    }}
-                >
-                    {isSignUp ? 'Sign In' : 'Sign Up'}
-                </button>
+                {isSignUp ? (
+                    <div>
+                        <span className="text-muted-foreground">Already have an account? </span>
+                        <button 
+                            type="button" 
+                            className="text-primary hover:underline font-medium focus:outline-none"
+                            onClick={() => setIsSignUp(false)}
+                        >
+                            Sign In
+                        </button>
+                    </div>
+                ) : (
+                    /* Multi-Role Registration Selection */
+                    <div className="space-y-2">
+                        <p className="text-muted-foreground">Don't have an account? Register as:</p>
+                        <div className="flex justify-center gap-3">
+                            <button 
+                                type="button"
+                                onClick={() => handleStartSignUp('user')}
+                                className="text-primary hover:underline font-medium text-xs bg-primary/10 px-3 py-1.5 rounded-full hover:bg-primary/20 transition-colors"
+                            >
+                                Shopper
+                            </button>
+                            <button 
+                                type="button"
+                                onClick={() => handleStartSignUp('retailer')}
+                                className="text-primary hover:underline font-medium text-xs bg-primary/10 px-3 py-1.5 rounded-full hover:bg-primary/20 transition-colors"
+                            >
+                                Retailer
+                            </button>
+                            <button 
+                                type="button"
+                                onClick={() => handleStartSignUp('wholesaler')}
+                                className="text-primary hover:underline font-medium text-xs bg-primary/10 px-3 py-1.5 rounded-full hover:bg-primary/20 transition-colors"
+                            >
+                                Wholesaler
+                            </button>
+                        </div>
+                    </div>
+                )}
             </div>
           )}
 

@@ -7,7 +7,6 @@ import { Slider } from '@/components/ui/slider';
 import { Search, Filter, MapPin, Package, DollarSign } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
 import { Product } from '@/types';
-import { useLocation } from '@/contexts/LocationContext';
 import { useCart } from '@/contexts/CartContext'; 
 import { toast } from 'sonner';
 import { Badge } from '@/components/ui/badge';
@@ -21,29 +20,43 @@ import {
   SheetTrigger,
 } from "@/components/ui/sheet";
 import { Label } from '@/components/ui/label';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 
-// FALLBACK: BITS Pilani Hyderabad Campus
-const FALLBACK_LOCATION = {
-    lat: 17.5449,
-    lng: 78.5718
+// --- CONFIGURATION: Hardcoded Retailer Distances ---
+const RETAILER_DISTANCE_MAP: Record<string, number> = {
+  'The Nerd Nook': 624,
+  'Campus Decor Co.': 31,
+  'Aesthetic Living': 1543,
+  'Geek Galaxy': 742,
+  'Retro Rewind': 648
 };
 
+const DEFAULT_DISTANCE = 3; // Fallback for any other retailer
+
 const ShopAll = () => {
-  const { userLocation, calculateDistance, error: locationError } = useLocation();
   const { addToCart } = useCart(); 
-  const [products, setProducts] = useState<(Product & { distance?: number | null })[]>([]);
+  
+  const [products, setProducts] = useState<(Product & { distance?: number | null; deliveryDate?: string | null })[]>([]);
   const [loading, setLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState('');
   
-  // --- FILTERS STATE ---
+  // Filters
   const [selectedCategory, setSelectedCategory] = useState('all');
-  const [priceRange, setPriceRange] = useState([5000]); // Max Price
-  const [maxDistance, setMaxDistance] = useState([50]); 
+  const [priceRange, setPriceRange] = useState([0, 10000]); 
+  const [maxDistance, setMaxDistance] = useState([2000]); 
   const [enableLocationFilter, setEnableLocationFilter] = useState(false);
   
-  // New Filters
-  const [showOutOfStock, setShowOutOfStock] = useState(false);
-  const [minQuantity, setMinQuantity] = useState([0]); // Min Stock
+  const [showOutOfStock, setShowOutOfStock] = useState(true);
+  const [minQuantity, setMinQuantity] = useState([0]); 
+
+  // Sorting State
+  const [sortOption, setSortOption] = useState('featured');
 
   const categories = ['all', 'mugs', 'posters', 'decor', 'lighting', 'tech', 'toys', 'general'];
 
@@ -54,7 +67,6 @@ const ShopAll = () => {
   const fetchProducts = async () => {
     setLoading(true);
     try {
-      // REMOVED .eq('in_stock', true) so we can filter it client-side instead
       const { data, error } = await supabase
         .from('products')
         .select(`
@@ -78,60 +90,69 @@ const ShopAll = () => {
     }
   };
 
-  // --- FILTER LOGIC ---
-  const filteredProducts = products.map(product => {
-    let distance = null;
-    
-    // 1. Try to use Retailer's Real Location
-    let retailerLat = product.retailer?.latitude;
-    let retailerLng = product.retailer?.longitude;
+  // --- PROCESSING PRODUCTS ---
+  const processedProducts = products.map(product => {
+    let distance = DEFAULT_DISTANCE;
+    let deliveryDate = null;
 
-    // 2. If missing, use Fallback (BITS Pilani)
-    if (!retailerLat || !retailerLng) {
-        retailerLat = FALLBACK_LOCATION.lat;
-        retailerLng = FALLBACK_LOCATION.lng;
+    // 1. Assign Distance based on Retailer Name
+    if (product.retailer?.name) {
+        const name = product.retailer.name;
+        if (RETAILER_DISTANCE_MAP[name] !== undefined) {
+            distance = RETAILER_DISTANCE_MAP[name];
+        }
     }
 
-    if (userLocation) {
-      distance = calculateDistance(
-        userLocation.lat,
-        userLocation.lng,
-        retailerLat,
-        retailerLng
-      );
+    // 2. Assign Delivery Date based on City (Only if in stock)
+    if (product.stock && product.stock > 0 && product.retailer?.city) {
+        const city = product.retailer.city;
+        if (city === 'Hyderabad') {
+            deliveryDate = '25/11/25';
+        } else if (city === 'Bengaluru' || city === 'Bangalore') {
+            deliveryDate = '26/11/25';
+        } else if (city === 'Mumbai' || city === 'Chennai') {
+            deliveryDate = '27/11/25';
+        } else if (city === 'New Delhi' || city === 'Delhi') {
+            deliveryDate = '29/11/25';
+        }
     }
-    return { ...product, distance };
+
+    return { ...product, distance, deliveryDate };
   }).filter(product => {
-    // 1. Search
+    // Filter Logic
     const matchesSearch = product.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
                          product.description?.toLowerCase().includes(searchQuery.toLowerCase());
-    
-    // 2. Category
     const matchesCategory = selectedCategory === 'all' || product.category === selectedCategory;
     
-    // 3. Price (Cost)
-    const matchesPrice = product.price <= priceRange[0];
+    // Check if price is within range [min, max]
+    const matchesPrice = product.price >= priceRange[0] && product.price <= priceRange[1];
     
-    // 4. Location
     let matchesLocation = true;
-    if (enableLocationFilter && userLocation) {
+    if (enableLocationFilter) {
        if (product.distance === null) matchesLocation = false; 
        else matchesLocation = (product.distance as number) <= maxDistance[0];
     }
 
-    // 5. Stock Availability
-    // If showOutOfStock is FALSE, we ONLY show items where in_stock is TRUE (or stock > 0)
     const matchesAvailability = showOutOfStock ? true : (product.stock && product.stock > 0);
-
-    // 6. Min Quantity (Stock Level)
     const matchesQuantity = (product.stock || 0) >= minQuantity[0];
 
     return matchesSearch && matchesCategory && matchesPrice && matchesLocation && matchesAvailability && matchesQuantity;
   }).sort((a, b) => {
-      if (enableLocationFilter && a.distance !== null && b.distance !== null) {
-          return (a.distance as number) - (b.distance as number);
+      // --- SORTING LOGIC ---
+      switch (sortOption) {
+        case 'price-asc': return a.price - b.price;
+        case 'price-desc': return b.price - a.price;
+        case 'name-asc': return a.name.localeCompare(b.name);
+        case 'name-desc': return b.name.localeCompare(a.name);
+        case 'stock-asc': return (a.stock || 0) - (b.stock || 0);
+        case 'stock-desc': return (b.stock || 0) - (a.stock || 0);
+        case 'distance-asc': return (a.distance || Infinity) - (b.distance || Infinity);
+        default: // 'featured'
+          if (enableLocationFilter && a.distance !== null && b.distance !== null) {
+              return a.distance - b.distance;
+          }
+          return 0;
       }
-      return 0;
   });
 
   return (
@@ -139,11 +160,11 @@ const ShopAll = () => {
       <Navbar />
       
       <div className="container mx-auto px-4 py-8">
-        <div className="flex flex-col md:flex-row gap-4 items-center justify-between mb-8">
+        <div className="flex flex-col lg:flex-row gap-4 items-center justify-between mb-8">
           <h1 className="text-3xl font-bold">Shop All</h1>
           
-          <div className="flex w-full md:w-auto gap-2">
-            <div className="relative flex-1 md:w-80">
+          <div className="flex flex-col sm:flex-row w-full lg:w-auto gap-2">
+            <div className="relative flex-1 sm:w-64">
               <Search className="absolute left-2 top-2.5 h-4 w-4 text-muted-foreground" />
               <Input
                 placeholder="Search products..."
@@ -152,10 +173,27 @@ const ShopAll = () => {
                 className="pl-8"
               />
             </div>
+
+            {/* Sort Dropdown */}
+            <Select value={sortOption} onValueChange={setSortOption}>
+              <SelectTrigger className="w-full sm:w-[180px]">
+                <SelectValue placeholder="Sort by" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="featured">Featured</SelectItem>
+                <SelectItem value="price-asc">Price: Low to High</SelectItem>
+                <SelectItem value="price-desc">Price: High to Low</SelectItem>
+                <SelectItem value="name-asc">Name: A to Z</SelectItem>
+                <SelectItem value="name-desc">Name: Z to A</SelectItem>
+                <SelectItem value="stock-desc">Stock: High to Low</SelectItem>
+                <SelectItem value="stock-asc">Stock: Low to High</SelectItem>
+                <SelectItem value="distance-asc">Distance: Nearest</SelectItem>
+              </SelectContent>
+            </Select>
             
             <Sheet>
               <SheetTrigger asChild>
-                <Button variant="outline" className="gap-2">
+                <Button variant="outline" className="gap-2 w-full sm:w-auto">
                   <Filter className="h-4 w-4" /> Filters
                 </Button>
               </SheetTrigger>
@@ -166,7 +204,6 @@ const ShopAll = () => {
                 </SheetHeader>
                 
                 <div className="grid gap-6 py-4">
-                  {/* Category */}
                   <div className="space-y-2">
                     <Label className="text-base">Category</Label>
                     <div className="flex flex-wrap gap-2">
@@ -183,25 +220,24 @@ const ShopAll = () => {
                     </div>
                   </div>
 
-                  {/* Price Filter */}
+                  {/* Cost Range Slider with Double Thumbs */}
                   <div className="space-y-4">
                     <div className="flex justify-between">
-                      <Label className="text-base flex items-center gap-2"><DollarSign className="h-4 w-4"/> Max Cost</Label>
-                      <span className="text-sm text-muted-foreground">₹{priceRange[0]}</span>
+                      <Label className="text-base flex items-center gap-2"><DollarSign className="h-4 w-4"/> Cost Range</Label>
+                      <span className="text-sm text-muted-foreground">₹{priceRange[0]} - ₹{priceRange[1]}</span>
                     </div>
                     <Slider
                       value={priceRange}
                       max={10000}
                       step={100}
                       onValueChange={setPriceRange}
+                      min={0}
                     />
                   </div>
 
-                  {/* Stock & Availability Filters */}
                   <div className="space-y-4 border-t pt-4">
                       <Label className="text-base flex items-center gap-2"><Package className="h-4 w-4"/> Inventory</Label>
                       
-                      {/* Availability Toggle */}
                       <div className="flex items-center justify-between">
                           <Label htmlFor="show-oos" className="text-sm font-normal">Show Out of Stock</Label>
                           <Switch 
@@ -210,11 +246,9 @@ const ShopAll = () => {
                               onCheckedChange={setShowOutOfStock}
                           />
                       </div>
-
-                      {/* Min Quantity Slider */}
                       <div className="space-y-3">
                          <div className="flex justify-between">
-                            <Label className="text-sm font-normal">Min Quantity Available</Label>
+                            <Label className="text-sm font-normal">Min Quantity</Label>
                             <span className="text-sm text-muted-foreground">{minQuantity[0]}+</span>
                          </div>
                          <Slider
@@ -226,7 +260,6 @@ const ShopAll = () => {
                       </div>
                   </div>
 
-                  {/* Location Filter */}
                   <div className="space-y-4 border-t pt-4">
                      <div className="flex justify-between items-center">
                         <Label className="text-base flex items-center gap-2">
@@ -236,28 +269,21 @@ const ShopAll = () => {
                             variant={enableLocationFilter ? "default" : "outline"} 
                             size="sm"
                             onClick={() => setEnableLocationFilter(!enableLocationFilter)}
-                            disabled={!userLocation}
                         >
                             {enableLocationFilter ? 'On' : 'Off'}
                         </Button>
                      </div>
                      
-                     {!userLocation && (
-                         <p className="text-xs text-red-500">
-                             {locationError || "Enable location to use this filter."}
-                         </p>
-                     )}
-
-                     {enableLocationFilter && userLocation && (
+                     {enableLocationFilter && (
                          <div className="space-y-3">
                              <div className="flex justify-between">
-                                <Label className="text-sm">Distance</Label>
+                                <Label className="text-sm">Max Distance</Label>
                                 <span className="text-sm text-muted-foreground">{maxDistance[0]} km</span>
                              </div>
                              <Slider
                                 value={maxDistance}
-                                max={100}
-                                step={1}
+                                max={2000}
+                                step={50}
                                 onValueChange={setMaxDistance}
                              />
                          </div>
@@ -269,13 +295,19 @@ const ShopAll = () => {
           </div>
         </div>
 
-        {/* Filters Summary */}
         <div className="flex flex-wrap gap-2 mb-6">
             {selectedCategory !== 'all' && (
                 <Badge variant="secondary" onClick={() => setSelectedCategory('all')} className="cursor-pointer">
                     Category: {selectedCategory} ✕
                 </Badge>
             )}
+            
+            {(priceRange[0] > 0 || priceRange[1] < 10000) && (
+                <Badge variant="secondary" onClick={() => setPriceRange([0, 10000])} className="cursor-pointer">
+                    Price: ₹{priceRange[0]} - ₹{priceRange[1]} ✕
+                </Badge>
+            )}
+
             {enableLocationFilter && (
                 <Badge variant="secondary" onClick={() => setEnableLocationFilter(false)} className="cursor-pointer">
                     Within {maxDistance[0]}km ✕
@@ -297,25 +329,20 @@ const ShopAll = () => {
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
             {[1,2,3,4].map(i => <div key={i} className="h-[300px] bg-muted rounded-xl animate-pulse" />)}
           </div>
-        ) : filteredProducts.length === 0 ? (
+        ) : processedProducts.length === 0 ? (
           <div className="text-center py-12">
             <p className="text-xl text-muted-foreground">No products found matching your criteria.</p>
-            <Button 
-                variant="link" 
-                onClick={() => {
+            <Button variant="link" onClick={() => {
                     setSelectedCategory('all');
-                    setPriceRange([10000]);
-                    setMinQuantity([0]);
-                    setShowOutOfStock(true);
+                    setPriceRange([0, 10000]); 
                     setEnableLocationFilter(false);
-                }}
-            >
-                Clear all filters
+                }}>
+                Clear filters
             </Button>
           </div>
         ) : (
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
-            {filteredProducts.map((product) => (
+            {processedProducts.map((product) => (
               <div key={product.id} className="relative group">
                   <ProductCard 
                     id={product.id}
@@ -325,15 +352,10 @@ const ShopAll = () => {
                     tag={product.tag || undefined}
                     retailerName={product.retailer?.name}
                     stock={product.stock}
+                    distance={product.distance}
+                    deliveryDate={product.deliveryDate} 
                     onAddToCart={() => addToCart(product.id)} 
                   />
-                  {/* Distance Badge Overlay */}
-                  {product.distance !== null && (
-                      <div className="absolute top-2 left-2 bg-black/70 text-white text-[10px] px-2 py-1 rounded-full flex items-center gap-1 backdrop-blur-sm">
-                          <MapPin className="h-3 w-3" />
-                          {product.distance.toFixed(1)} km
-                      </div>
-                  )}
               </div>
             ))}
           </div>
