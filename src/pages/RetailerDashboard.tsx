@@ -90,7 +90,6 @@ const RetailerDashboard = () => {
   // Location
   const [isLocationOpen, setIsLocationOpen] = useState(false);
   const [locationForm, setLocationForm] = useState('');
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
   const [savingLocation, setSavingLocation] = useState(false);
 
   // Calendar
@@ -121,27 +120,41 @@ const RetailerDashboard = () => {
         .eq('retailer_id', retailerData.id)
         .order('name');
       
-      // 3. Marketplace (Master Catalog - Where Wholesaler Stock lives)
+      // 3. Marketplace (Master Catalog)
       const { data: marketData } = await supabase.from('products')
         .select(`*, wholesalers:wholesaler_id (id, name, location, email)`)
-        .eq('retailer_id', 'ret-1').order('name');
+        .neq('retailer_id', retailerData.id)
+        .order('name');
       
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const mappedMarketData = (marketData || []).map((item: any) => ({ ...item, wholesaler: item.wholesalers }));
       setWholesaleProducts(mappedMarketData);
 
-      // 4. MAP Real Wholesaler Stock to Inventory
-      // We find the matching Master Product by Name to get the true wholesaler_stock
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      // 4. MAP Real Wholesaler Stock to Inventory (With Random Fallback for Test Cases)
       const finalInventory = (inventoryData || []).map((invItem: any) => {
-          // eslint-disable-next-line @typescript-eslint/no-explicit-any
-          const masterItem = mappedMarketData.find((m: any) => m.name === invItem.name);
           
+          let masterItems = mappedMarketData.filter((m: any) => 
+              m.name.toLowerCase().trim() === invItem.name.toLowerCase().trim()
+          );
+
+          let masterItem = masterItems.find((m: any) => m.wholesaler_id === invItem.wholesaler_id);
+
+          if (!masterItem) {
+             masterItem = masterItems.find((m: any) => (m.wholesaler_stock || 0) > 0) || masterItems[0];
+          }
+          
+          // --- TEST CASE FALLBACK LOGIC ---
+          let wStock = masterItem ? (masterItem.wholesaler_stock || 0) : 0;
+          
+          if (wStock === 0) {
+             // If stock is 0, assign a random value for testing as requested
+             const randomStocks = [30, 40, 50, 90, 100];
+             wStock = randomStocks[Math.floor(Math.random() * randomStocks.length)];
+          }
+          // -------------------------------
+
           return {
               ...invItem,
-              // Use Master Item stock if available, otherwise fallback to 0
-              wholesaler_stock: masterItem ? masterItem.wholesaler_stock : 0,
-              // Ensure wholesaler details are populated
+              wholesaler_stock: wStock,
               wholesaler: invItem.wholesaler || (masterItem ? masterItem.wholesaler : null)
           };
       });
@@ -155,10 +168,8 @@ const RetailerDashboard = () => {
       const { data: cOrders } = await supabase.from('orders').select('*').order('created_at', { ascending: false });
       const validProductIds = new Set(finalInventory.map(p => p.id));
       
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const relevantOrders = (cOrders || []).filter((order: any) => {
           if (!order.order_details || !Array.isArray(order.order_details)) return false;
-          // eslint-disable-next-line @typescript-eslint/no-explicit-any
           return order.order_details.some((item: any) => validProductIds.has(item.product_id));
       });
       setMainOrders(relevantOrders);
@@ -280,7 +291,6 @@ const RetailerDashboard = () => {
   const openEditDialog = (product: Product) => { setEditingProduct(product); setEditForm({ price: product.price, stock: product.stock }); setIsEditOpen(true); };
   const handleUpdateProduct = async () => { if (!editingProduct) return; await supabase.from('products').update({ price: editForm.price, stock: editForm.stock }).eq('id', editingProduct.id); setInventory(prev => prev.map(p => p.id === editingProduct.id ? { ...p, price: editForm.price, stock: editForm.stock } : p)); setIsEditOpen(false); };
   const handleAddOfflineOrder = async () => { if(!retailer || !selectedDate) return; const { data } = await supabase.from('offline_orders').insert({ retailer_id: retailer.id, customer_name: newOfflineOrder.customer_name, product_details: newOfflineOrder.product_details, amount: parseFloat(newOfflineOrder.amount)||0, status: 'pending', due_date: selectedDate.toISOString() }).select(); if(data) { setOfflineOrders([...offlineOrders, data[0]]); setIsAddOfflineOpen(false); toast.success("Added"); } };
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const toggleOfflineStatus = async (id: string, status: string) => { const newS = status === 'pending' ? 'completed' : 'pending'; await supabase.from('offline_orders').update({ status: newS }).eq('id', id); setOfflineOrders(prev => prev.map(o => o.id === id ? { ...o, status: newS as any } : o)); };
   const handleDeleteOffline = async (id: string) => { await supabase.from('offline_orders').delete().eq('id', id); setOfflineOrders(prev => prev.filter(o => o.id !== id)); };
 
@@ -317,7 +327,7 @@ const RetailerDashboard = () => {
         <Dialog open={isAddProductOpen} onOpenChange={setIsAddProductOpen}><DialogContent className="max-w-5xl h-[85vh]"><div className="p-6"><Input placeholder="Search..." value={searchQuery} onChange={e=>setSearchQuery(e.target.value)}/></div><div className="flex-1 overflow-auto p-6"><Table><TableHeader><TableRow><TableHead>Product</TableHead><TableHead>Cost</TableHead><TableHead>Stock</TableHead><TableHead>Action</TableHead></TableRow></TableHeader><TableBody>{filteredWholesale.map(p=><TableRow key={p.id}><TableCell>{p.name}</TableCell><TableCell>₹{Math.floor(p.price*0.7)}</TableCell><TableCell>{p.wholesaler_stock}</TableCell><TableCell><Button size="sm" onClick={()=>handleRestock(p)}>Order</Button></TableCell></TableRow>)}</TableBody></Table></div></DialogContent></Dialog>
         <Dialog open={isEditOpen} onOpenChange={setIsEditOpen}><DialogContent><DialogHeader><DialogTitle>Edit</DialogTitle></DialogHeader><Input type="number" value={editForm.price} onChange={e=>setEditForm({...editForm, price:Number(e.target.value)})}/><Input type="number" value={editForm.stock} onChange={e=>setEditForm({...editForm, stock:Number(e.target.value)})}/><DialogFooter><Button onClick={handleUpdateProduct}>Save</Button></DialogFooter></DialogContent></Dialog>
         
-        {/* UPDATED FEEDBACK & REPLY DIALOG */}
+        {/* FEEDBACK & REPLY DIALOG */}
         <Dialog open={isFeedbackOpen} onOpenChange={setIsFeedbackOpen}>
             <DialogContent className="max-w-2xl">
                 <DialogHeader>
@@ -399,7 +409,6 @@ const RetailerDashboard = () => {
                                             <Mail className="h-3 w-3" /> {p.wholesaler.email}
                                         </div>
                                     )}
-                                    {/* Explicitly display Wholesaler Stock Availability */}
                                     <div className={`text-xs font-bold ${(p.wholesaler_stock || 0) > 0 ? "text-green-600" : "text-red-500"}`}>
                                         Avail: {p.wholesaler_stock ?? '0'}
                                     </div>
@@ -409,8 +418,7 @@ const RetailerDashboard = () => {
                             )}
                         </TableCell>
                         <TableCell className="text-right flex justify-end gap-2 items-center">
-                            {/* Restock Button */}
-                            {isLow && p.wholesaler_stock !== undefined && (
+                            {isLow && (p.wholesaler_stock || 0) > 0 && (
                                 <div className="flex items-center gap-1 mr-2">
                                     <Input className="w-16 h-8" placeholder="Qty" onChange={(e) => handleQuantityChange(p.id, e.target.value)} />
                                     <Button size="sm" onClick={() => handleRestock(p)}>Buy</Button>
@@ -440,7 +448,6 @@ const RetailerDashboard = () => {
                                         <TableCell className="font-mono text-xs">{order.id.substring(0,8)}</TableCell>
                                         <TableCell>
                                             <div className="flex flex-col gap-1">
-                                                {/* eslint-disable-next-line @typescript-eslint/no-explicit-any */}
                                                 {Array.isArray(order.order_details) && order.order_details.map((item: any, idx: number) => (
                                                     <span key={idx} className="text-sm">{item.name} (x{item.quantity})</span>
                                                 ))}
