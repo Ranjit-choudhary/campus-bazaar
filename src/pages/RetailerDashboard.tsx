@@ -6,13 +6,12 @@ import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/com
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Input } from '@/components/ui/input';
-import { Plus, Store, Search, Edit, Trash2, MessageSquare, MapPin, User, Calendar as CalendarIcon, CheckCircle2, XCircle, Truck } from 'lucide-react'; 
+import { Plus, Store, Edit, MessageSquare, MapPin, Calendar as CalendarIcon, CheckCircle2, XCircle, Truck, Mail, Send, Trash2 } from 'lucide-react'; 
 import { supabase } from '@/lib/supabase';
 import { toast } from 'sonner';
 import { Badge } from '@/components/ui/badge';
-import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger, DialogFooter } from "@/components/ui/dialog";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger, DialogFooter } from "@/components/ui/dialog";
 import { Label } from '@/components/ui/label';
-import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger } from "@/components/ui/alert-dialog";
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { getCoordinatesFromAddress } from '@/lib/utils'; 
 import { Calendar } from "@/components/ui/calendar"; 
@@ -21,20 +20,48 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 
 // Interfaces
 interface OfflineOrder { id: string; customer_name: string; product_details: string; due_date: string; amount: number; status: 'pending' | 'completed'; is_paid: boolean; }
-interface Product { id: string; name: string; price: number; stock: number; wholesaler_stock?: number; category: string; in_stock: boolean; description?: string; images?: string[]; theme_id?: string; wholesaler_id?: string; wholesaler?: { name: string; location: string; id?: string; } }
+
+interface Product { 
+    id: string; 
+    name: string; 
+    price: number; 
+    stock: number; 
+    wholesaler_stock?: number; // This comes from the Master Product
+    category: string; 
+    in_stock: boolean; 
+    description?: string; 
+    images?: string[]; 
+    theme_id?: string; 
+    wholesaler_id?: string; 
+    wholesaler?: { 
+        name: string; 
+        location: string; 
+        id?: string; 
+        email?: string;
+    } 
+}
+
 interface Retailer { id: string; name: string; email: string; city: string; }
 interface RestockOrder { id: string; created_at: string; quantity: number; status: string; product_id: string; product?: { name: string; price: number; }; wholesaler?: { name: string; }; }
-interface FeedbackItem { id: string; created_at: string; type: 'feedback' | 'query'; content: string; rating?: number; user_id: string; }
 
-// Main Order Interface (Direct from 'orders' table)
+interface FeedbackItem { 
+    id: string; 
+    created_at: string; 
+    type: 'feedback' | 'query'; 
+    content: string; 
+    rating?: number; 
+    user_id: string; 
+    reply?: string | null; 
+}
+
 interface MainOrder {
   id: string;
   created_at: string;
   total_amount: number;
   status: string;
-  order_details: any[]; // JSON Array
+  order_details: any[]; 
   user_id: string;
-  user_email?: string; // We will try to fetch this
+  user_email?: string;
 }
 
 const RetailerDashboard = () => {
@@ -54,15 +81,16 @@ const RetailerDashboard = () => {
   const [isEditOpen, setIsEditOpen] = useState(false);
   const [editForm, setEditForm] = useState({ price: 0, stock: 0 });
 
-  // Feedback
+  // Feedback & Reply State
   const [viewFeedbackProduct, setViewFeedbackProduct] = useState<Product | null>(null);
   const [productFeedback, setProductFeedback] = useState<FeedbackItem[]>([]);
   const [isFeedbackOpen, setIsFeedbackOpen] = useState(false);
-  const [feedbackLoading, setFeedbackLoading] = useState(false);
+  const [replyValues, setReplyValues] = useState<{[feedbackId: string]: string}>({}); 
 
   // Location
   const [isLocationOpen, setIsLocationOpen] = useState(false);
   const [locationForm, setLocationForm] = useState('');
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
   const [savingLocation, setSavingLocation] = useState(false);
 
   // Calendar
@@ -83,62 +111,59 @@ const RetailerDashboard = () => {
       setRetailer(retailerData);
       setLocationForm(retailerData.city || ''); 
 
-      // 2. Inventory (With Wholesaler Info for Restock Button)
-      // We join with master products to get 'wholesaler_stock'
+      // 2. Inventory (Your Local Products)
       const { data: inventoryData } = await supabase
         .from('products')
         .select(`
             *,
-            wholesaler:wholesaler_id ( name, location )
+            wholesaler:wholesaler_id ( name, location, email )
         `)
         .eq('retailer_id', retailerData.id)
         .order('name');
       
-      // We need to fetch the "Master" version of these products to get the real wholesaler_stock
-      // Because the retailer's copy usually has wholesaler_stock = 0 or null
-      // For simplicity in this test environment, we will fetch all master products next and map them.
-      
-      // 3. Marketplace (Master Catalog)
+      // 3. Marketplace (Master Catalog - Where Wholesaler Stock lives)
       const { data: marketData } = await supabase.from('products')
-        .select(`*, wholesalers:wholesaler_id (id, name, location)`)
+        .select(`*, wholesalers:wholesaler_id (id, name, location, email)`)
         .eq('retailer_id', 'ret-1').order('name');
       
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const mappedMarketData = (marketData || []).map((item: any) => ({ ...item, wholesaler: item.wholesalers }));
       setWholesaleProducts(mappedMarketData);
 
-      // Map Inventory to include real Wholesaler Stock
+      // 4. MAP Real Wholesaler Stock to Inventory
+      // We find the matching Master Product by Name to get the true wholesaler_stock
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const finalInventory = (inventoryData || []).map((invItem: any) => {
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
           const masterItem = mappedMarketData.find((m: any) => m.name === invItem.name);
+          
           return {
               ...invItem,
+              // Use Master Item stock if available, otherwise fallback to 0
               wholesaler_stock: masterItem ? masterItem.wholesaler_stock : 0,
+              // Ensure wholesaler details are populated
               wholesaler: invItem.wholesaler || (masterItem ? masterItem.wholesaler : null)
           };
       });
       setInventory(finalInventory);
 
-      // 4. Restock Orders (Supply Chain)
+      // 5. Restock Orders
       const { data: rOrders } = await supabase.from('restock_orders').select(`*, product:product_id (name, price), wholesaler:wholesaler_id (name)`).eq('retailer_id', retailerData.id).order('created_at', { ascending: false });
       setRestockOrders(rOrders || []);
 
-      // 5. CUSTOMER ORDERS (Directly from 'orders' table - NO FILTER as requested)
-      const { data: cOrders } = await supabase
-        .from('orders')
-        .select('*') 
-        .order('created_at', { ascending: false });
-      
-      // Filter: Only show orders containing products belonging to this retailer
-      // validProductIds is a Set of all product IDs currently in this retailer's inventory
+      // 6. Customer Orders
+      const { data: cOrders } = await supabase.from('orders').select('*').order('created_at', { ascending: false });
       const validProductIds = new Set(finalInventory.map(p => p.id));
       
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const relevantOrders = (cOrders || []).filter((order: any) => {
-          // Check if any item in the order is in our inventory list
           if (!order.order_details || !Array.isArray(order.order_details)) return false;
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
           return order.order_details.some((item: any) => validProductIds.has(item.product_id));
       });
-
       setMainOrders(relevantOrders);
-      // 6. Offline Orders
+      
+      // 7. Offline Orders
       const { data: offlineData } = await supabase.from('offline_orders').select('*').eq('retailer_id', retailerData.id);
       setOfflineOrders(offlineData || []);
 
@@ -147,92 +172,56 @@ const RetailerDashboard = () => {
     fetchRetailerData();
   }, [navigate]);
 
-  // --- EMAIL TRIGGER (For Customer Status Updates) ---
+  // --- STATUS EMAIL ---
   const triggerStatusUpdateEmail = async (order: MainOrder, newStatus: string) => {
       try {
-          // 1. Fetch the BUYER's email
-          const { data: userData } = await supabase
-            .from('users')
-            .select('email')
-            .eq('id', order.user_id)
-            .single();
-          
-          // Ensure we have a valid buyer email, otherwise stop
-          const targetEmail = userData?.email; 
-
-          if (!targetEmail) {
-             toast.error("Buyer email not found. No notification sent.");
-             return;
-          }
-
-          // 2. If status is 'delivered', trigger the Re-Auth Email Hack
-          if (newStatus === 'delivered') {
-              const { error } = await supabase.auth.resetPasswordForEmail(targetEmail, {
-                  redirectTo: window.location.origin + '/profile', // Send them to their profile
-              });
-
-              if (error) {
-                  console.error("Email trigger error:", error);
-                  toast.error("Failed to trigger delivery email.");
-              } else {
-                  toast.success(`Delivery Email sent to user: ${targetEmail}`);
-              }
+          const { data: userData } = await supabase.from('users').select('email').eq('id', order.user_id).single();
+          if (userData?.email && newStatus === 'delivered') {
+              await supabase.auth.resetPasswordForEmail(userData.email, { redirectTo: window.location.origin + '/profile' });
+              toast.success(`Delivery Email sent to user.`);
           } 
-          // You can add else if (newStatus === 'shipped') logic here later
-
-      } catch (e) {
-          console.error("Email error:", e);
-      }
+      } catch (e) { console.error("Email error:", e); }
   };
 
   // --- HANDLERS ---
-  
-  // 1. Update Customer Order Status (Main Table)
   const updateMainOrderStatus = async (orderId: string, newStatus: string) => {
-      const { error } = await supabase
-        .from('orders')
-        .update({ status: newStatus })
-        .eq('id', orderId);
-      
+      const { error } = await supabase.from('orders').update({ status: newStatus }).eq('id', orderId);
       if (!error) {
           toast.success(`Order updated to ${newStatus}`);
-          
-          // Update Local State
-          const updatedOrders = mainOrders.map(o => o.id === orderId ? { ...o, status: newStatus } : o);
-          setMainOrders(updatedOrders);
-
-          // Trigger Email
+          setMainOrders(prev => prev.map(o => o.id === orderId ? { ...o, status: newStatus } : o));
           const order = mainOrders.find(o => o.id === orderId);
           if (order) triggerStatusUpdateEmail(order, newStatus);
-
       } else {
           toast.error("Failed to update status");
       }
   };
 
-  const handleUpdateLocation = async () => { if (!retailer || !locationForm) return; setSavingLocation(true); try { const coords = await getCoordinatesFromAddress(locationForm); const updates = { city: locationForm, latitude: coords?.lat || 17.5449, longitude: coords?.lng || 78.5718 }; await supabase.from('retailers').update(updates).eq('id', retailer.id); toast.success("Location updated."); setRetailer({ ...retailer, city: locationForm }); setIsLocationOpen(false); } catch (e) { toast.error("Failed."); } finally { setSavingLocation(false); } };
+  const handleUpdateLocation = async () => { 
+      if (!retailer || !locationForm) return; 
+      setSavingLocation(true); 
+      try { 
+          const coords = await getCoordinatesFromAddress(locationForm); 
+          const updates = { city: locationForm, latitude: coords?.lat || 17.5449, longitude: coords?.lng || 78.5718 }; 
+          await supabase.from('retailers').update(updates).eq('id', retailer.id); 
+          toast.success("Location updated."); 
+          setRetailer({ ...retailer, city: locationForm }); 
+          setIsLocationOpen(false); 
+      } catch (e) { toast.error("Failed."); } 
+      finally { setSavingLocation(false); } 
+  };
+  
   const handleQuantityChange = (productId: string, val: string) => { const num = parseInt(val); if (!isNaN(num) && num > 0) setOrderQuantities(prev => ({...prev, [productId]: num})); };
   
-  // RESTOCK HANDLER (Used in Inventory & Marketplace)
   const handleRestock = (product: Product) => { 
       if (!retailer) return; 
       const qty = orderQuantities[product.id] || 10; 
-      
-      // If product doesn't have wholesaler details (e.g. local item), warn user
-      if (!product.wholesaler_id) {
-          toast.error("No wholesaler linked to this product.");
-          return;
-      }
-
-      // Construct details. Note: product.wholesaler might be missing if it's a raw inventory item, 
-      // but we mapped it in useEffect.
+      if (!product.wholesaler_id) { toast.error("No wholesaler linked."); return; }
       const orderDetails = { 
           product: { id: product.id, name: product.name, price: product.price, category: product.category, description: product.description, images: product.images, theme_id: product.theme_id }, 
           wholesaler: { id: product.wholesaler_id, name: product.wholesaler?.name || 'Unknown', location: product.wholesaler?.location || '' }, 
           retailer: { id: retailer.id, name: retailer.name, email: retailer.email, city: retailer.city }, 
           quantity: qty 
       }; 
-      
       setIsAddProductOpen(false); 
       navigate('/retailer/payment', { state: orderDetails }); 
   };
@@ -246,19 +235,57 @@ const RetailerDashboard = () => {
       toast.success("Stock updated"); 
   };
 
-  const openFeedbackDialog = async (product: Product) => { setViewFeedbackProduct(product); setIsFeedbackOpen(true); const { data } = await supabase.from('product_feedback').select('*').eq('product_id', product.id); setProductFeedback(data || []); };
+  // --- FEEDBACK & REPLY LOGIC ---
+  const openFeedbackDialog = async (product: Product) => { 
+      setViewFeedbackProduct(product); 
+      setIsFeedbackOpen(true); 
+      setReplyValues({}); 
+      const { data } = await supabase
+          .from('product_feedback')
+          .select('*')
+          .eq('product_id', product.id)
+          .order('created_at', { ascending: false });
+      setProductFeedback(data || []); 
+  };
+
+  const handleReplyChange = (id: string, value: string) => {
+      setReplyValues(prev => ({ ...prev, [id]: value }));
+  };
+
+  const handleSubmitReply = async (feedbackId: string) => {
+      const replyText = replyValues[feedbackId];
+      if (!replyText?.trim()) return;
+
+      const { error } = await supabase
+          .from('product_feedback')
+          .update({ reply: replyText })
+          .eq('id', feedbackId);
+
+      if (error) {
+          toast.error("Failed to send reply.");
+      } else {
+          toast.success("Reply sent!");
+          setProductFeedback(prev => prev.map(item => 
+              item.id === feedbackId ? { ...item, reply: replyText } : item
+          ));
+          setReplyValues(prev => {
+              const newState = { ...prev };
+              delete newState[feedbackId];
+              return newState;
+          });
+      }
+  };
+
+  // --- OTHER ACTIONS ---
   const openEditDialog = (product: Product) => { setEditingProduct(product); setEditForm({ price: product.price, stock: product.stock }); setIsEditOpen(true); };
   const handleUpdateProduct = async () => { if (!editingProduct) return; await supabase.from('products').update({ price: editForm.price, stock: editForm.stock }).eq('id', editingProduct.id); setInventory(prev => prev.map(p => p.id === editingProduct.id ? { ...p, price: editForm.price, stock: editForm.stock } : p)); setIsEditOpen(false); };
-  const handleDeleteProduct = async (productId: string) => { await supabase.from('products').delete().eq('id', productId); setInventory(prev => prev.filter(p => p.id !== productId)); };
   const handleAddOfflineOrder = async () => { if(!retailer || !selectedDate) return; const { data } = await supabase.from('offline_orders').insert({ retailer_id: retailer.id, customer_name: newOfflineOrder.customer_name, product_details: newOfflineOrder.product_details, amount: parseFloat(newOfflineOrder.amount)||0, status: 'pending', due_date: selectedDate.toISOString() }).select(); if(data) { setOfflineOrders([...offlineOrders, data[0]]); setIsAddOfflineOpen(false); toast.success("Added"); } };
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const toggleOfflineStatus = async (id: string, status: string) => { const newS = status === 'pending' ? 'completed' : 'pending'; await supabase.from('offline_orders').update({ status: newS }).eq('id', id); setOfflineOrders(prev => prev.map(o => o.id === id ? { ...o, status: newS as any } : o)); };
   const handleDeleteOffline = async (id: string) => { await supabase.from('offline_orders').delete().eq('id', id); setOfflineOrders(prev => prev.filter(o => o.id !== id)); };
 
   const orderedDates = offlineOrders.map(o => new Date(o.due_date));
   const selectedDateOrders = offlineOrders.filter(o => selectedDate && isSameDay(new Date(o.due_date), selectedDate));
-  const totalProducts = inventory.length;
-  const lowStockItems = inventory.filter(p => p.stock < 10).length;
-  const totalValue = inventory.reduce((acc, curr) => acc + (curr.price * curr.stock), 0);
   const filteredWholesale = wholesaleProducts.filter(p => p.name.toLowerCase().includes(searchQuery.toLowerCase()));
   
   const getStatusBadge = (status: string) => {
@@ -289,7 +316,60 @@ const RetailerDashboard = () => {
         <Dialog open={isLocationOpen} onOpenChange={setIsLocationOpen}><DialogContent><DialogHeader><DialogTitle>Update Location</DialogTitle></DialogHeader><Input value={locationForm} onChange={e=>setLocationForm(e.target.value)}/><DialogFooter><Button onClick={handleUpdateLocation}>Update</Button></DialogFooter></DialogContent></Dialog>
         <Dialog open={isAddProductOpen} onOpenChange={setIsAddProductOpen}><DialogContent className="max-w-5xl h-[85vh]"><div className="p-6"><Input placeholder="Search..." value={searchQuery} onChange={e=>setSearchQuery(e.target.value)}/></div><div className="flex-1 overflow-auto p-6"><Table><TableHeader><TableRow><TableHead>Product</TableHead><TableHead>Cost</TableHead><TableHead>Stock</TableHead><TableHead>Action</TableHead></TableRow></TableHeader><TableBody>{filteredWholesale.map(p=><TableRow key={p.id}><TableCell>{p.name}</TableCell><TableCell>₹{Math.floor(p.price*0.7)}</TableCell><TableCell>{p.wholesaler_stock}</TableCell><TableCell><Button size="sm" onClick={()=>handleRestock(p)}>Order</Button></TableCell></TableRow>)}</TableBody></Table></div></DialogContent></Dialog>
         <Dialog open={isEditOpen} onOpenChange={setIsEditOpen}><DialogContent><DialogHeader><DialogTitle>Edit</DialogTitle></DialogHeader><Input type="number" value={editForm.price} onChange={e=>setEditForm({...editForm, price:Number(e.target.value)})}/><Input type="number" value={editForm.stock} onChange={e=>setEditForm({...editForm, stock:Number(e.target.value)})}/><DialogFooter><Button onClick={handleUpdateProduct}>Save</Button></DialogFooter></DialogContent></Dialog>
-        <Dialog open={isFeedbackOpen} onOpenChange={setIsFeedbackOpen}><DialogContent><ScrollArea className="h-64">{productFeedback.map(f=><div key={f.id} className="mb-2 p-2 border rounded">{f.content}</div>)}</ScrollArea></DialogContent></Dialog>
+        
+        {/* UPDATED FEEDBACK & REPLY DIALOG */}
+        <Dialog open={isFeedbackOpen} onOpenChange={setIsFeedbackOpen}>
+            <DialogContent className="max-w-2xl">
+                <DialogHeader>
+                    <DialogTitle>
+                        Feedback for {viewFeedbackProduct?.name}
+                    </DialogTitle>
+                </DialogHeader>
+                <ScrollArea className="h-[400px] pr-4">
+                    {productFeedback.length === 0 ? (
+                        <div className="text-center py-8 text-muted-foreground">No queries or feedback yet.</div>
+                    ) : (
+                        productFeedback.map(item => (
+                            <div key={item.id} className="mb-4 p-4 border rounded-lg bg-card shadow-sm">
+                                <div className="flex justify-between items-start mb-2">
+                                    <div className="flex items-center gap-2">
+                                        <Badge variant={item.type === 'query' ? 'outline' : 'secondary'} className={item.type === 'query' ? 'border-orange-500 text-orange-600' : ''}>
+                                            {item.type.toUpperCase()}
+                                        </Badge>
+                                        <span className="text-xs text-muted-foreground">{new Date(item.created_at).toLocaleDateString()}</span>
+                                    </div>
+                                    {item.rating && (
+                                        <div className="text-yellow-500 text-xs font-bold">★ {item.rating}/5</div>
+                                    )}
+                                </div>
+                                
+                                <p className="text-sm mb-4">{item.content}</p>
+                                
+                                {/* Reply Section */}
+                                {item.reply ? (
+                                    <div className="bg-muted/50 p-3 rounded-md border-l-4 border-primary text-sm">
+                                        <span className="font-semibold text-primary block mb-1">Your Reply:</span> 
+                                        {item.reply}
+                                    </div>
+                                ) : (
+                                    <div className="flex gap-2 mt-2 pt-2 border-t border-dashed">
+                                        <Input 
+                                            placeholder="Type a reply to customer..." 
+                                            className="flex-1 h-9 text-sm"
+                                            value={replyValues[item.id] || ''} 
+                                            onChange={(e) => handleReplyChange(item.id, e.target.value)}
+                                        />
+                                        <Button size="sm" onClick={() => handleSubmitReply(item.id)}>
+                                            <Send className="h-3 w-3 mr-1" /> Reply
+                                        </Button>
+                                    </div>
+                                )}
+                            </div>
+                        ))
+                    )}
+                </ScrollArea>
+            </DialogContent>
+        </Dialog>
 
         <Tabs defaultValue="inventory">
             <TabsList>
@@ -300,8 +380,7 @@ const RetailerDashboard = () => {
             </TabsList>
 
             <TabsContent value="inventory">
-               {/* RESTORED: Wholesaler Stock & Restock Logic */}
-               <Card><CardContent className="pt-6"><Table><TableHeader><TableRow><TableHead>Name</TableHead><TableHead>Price</TableHead><TableHead>My Stock</TableHead><TableHead>Wholesaler Stock</TableHead><TableHead className="text-right">Actions</TableHead></TableRow></TableHeader><TableBody>{inventory.map(p => {
+               <Card><CardContent className="pt-6"><Table><TableHeader><TableRow><TableHead>Name</TableHead><TableHead>Price</TableHead><TableHead>My Stock</TableHead><TableHead>Wholesaler & Stock</TableHead><TableHead className="text-right">Actions</TableHead></TableRow></TableHeader><TableBody>{inventory.map(p => {
                    const isLow = p.stock < 10;
                    return (
                     <TableRow key={p.id} className={isLow ? "bg-red-50" : ""}>
@@ -311,7 +390,24 @@ const RetailerDashboard = () => {
                         </TableCell>
                         <TableCell>₹{p.price}</TableCell>
                         <TableCell>{p.stock}</TableCell>
-                        <TableCell>{p.wholesaler_stock ?? 'N/A'}</TableCell>
+                        <TableCell>
+                            {p.wholesaler ? (
+                                <div className="flex flex-col space-y-1">
+                                    <div className="font-medium text-sm">{p.wholesaler.name}</div>
+                                    {p.wholesaler.email && (
+                                        <div className="text-xs text-muted-foreground flex items-center gap-1">
+                                            <Mail className="h-3 w-3" /> {p.wholesaler.email}
+                                        </div>
+                                    )}
+                                    {/* Explicitly display Wholesaler Stock Availability */}
+                                    <div className={`text-xs font-bold ${(p.wholesaler_stock || 0) > 0 ? "text-green-600" : "text-red-500"}`}>
+                                        Avail: {p.wholesaler_stock ?? '0'}
+                                    </div>
+                                </div>
+                            ) : (
+                                <span className="text-muted-foreground text-sm">N/A</span>
+                            )}
+                        </TableCell>
                         <TableCell className="text-right flex justify-end gap-2 items-center">
                             {/* Restock Button */}
                             {isLow && p.wholesaler_stock !== undefined && (
@@ -321,14 +417,16 @@ const RetailerDashboard = () => {
                                 </div>
                             )}
                             <Button variant="ghost" size="icon" onClick={()=>openEditDialog(p)}><Edit className="h-4 w-4"/></Button>
-                            <Button variant="ghost" size="icon" onClick={()=>openFeedbackDialog(p)}><MessageSquare className="h-4 w-4"/></Button>
+                            <Button variant="ghost" size="icon" onClick={()=>openFeedbackDialog(p)} title="View Queries/Feedback">
+                                <MessageSquare className="h-4 w-4 text-blue-600"/>
+                            </Button>
                         </TableCell>
                     </TableRow>
                    );
                })}</TableBody></Table></CardContent></Card>
             </TabsContent>
 
-            {/* --- INCOMING ORDERS (Main 'orders' table) --- */}
+            {/* ... other tabs content ... */}
             <TabsContent value="sales">
                 <Card>
                     <CardHeader><CardTitle>Incoming Orders</CardTitle><CardDescription>View and manage all orders.</CardDescription></CardHeader>
@@ -342,6 +440,7 @@ const RetailerDashboard = () => {
                                         <TableCell className="font-mono text-xs">{order.id.substring(0,8)}</TableCell>
                                         <TableCell>
                                             <div className="flex flex-col gap-1">
+                                                {/* eslint-disable-next-line @typescript-eslint/no-explicit-any */}
                                                 {Array.isArray(order.order_details) && order.order_details.map((item: any, idx: number) => (
                                                     <span key={idx} className="text-sm">{item.name} (x{item.quantity})</span>
                                                 ))}

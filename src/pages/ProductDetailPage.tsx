@@ -1,11 +1,10 @@
-// src/pages/ProductDetailPage.tsx
 import { useState, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { supabase } from '@/lib/supabase';
 import { useCart } from '@/contexts/CartContext';
 import Navbar from '@/components/Navbar';
 import { Button } from '@/components/ui/button';
-import { ArrowLeft, ShoppingCart, Send, Package, Store, Star, Bell, Tag } from 'lucide-react'; // Added Bell, Tag
+import { ArrowLeft, ShoppingCart, Send, Package, Store, Star, Bell, Tag, MessageSquare } from 'lucide-react'; 
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Textarea } from '@/components/ui/textarea';
 import { Label } from '@/components/ui/label';
@@ -13,7 +12,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
 import { Separator } from '@/components/ui/separator';
-import { Badge } from '@/components/ui/badge'; // Added Badge
+import { Badge } from '@/components/ui/badge';
 
 // Interface for Feedback matching Supabase table
 interface Feedback {
@@ -24,7 +23,7 @@ interface Feedback {
   content: string;
   rating?: number;
   created_at: string;
-  user_email?: string;
+  reply?: string; // Added Reply Field
 }
 
 const ProductDetailPage = () => {
@@ -153,8 +152,6 @@ const ProductDetailPage = () => {
 
   const handleNotifyMe = () => {
       if (notified) return;
-      
-      // Here you would typically save the notification request to a database
       toast.success("We'll notify you!", {
           description: "You will receive an email when this item is back in stock."
       });
@@ -288,7 +285,7 @@ const ProductDetailPage = () => {
 
             <p className="text-muted-foreground mb-8 flex-grow text-lg leading-relaxed">{product.description}</p>
             
-            {/* Actions - "Add to Cart" or "Notify Me" */}
+            {/* Actions */}
             <div className="flex items-center gap-4 mt-auto">
               <Button 
                 size="lg" 
@@ -407,9 +404,25 @@ const ProductDetailPage = () => {
                             </span>
                         </div>
                         <p className="text-sm text-foreground mb-3">{item.content}</p>
-                        <div className="text-right text-xs text-muted-foreground font-medium">
-                            — User {item.user_id.substring(0, 6)}...
-                        </div>
+                        
+                        {/* Display Reply if Exists */}
+                        {item.reply && (
+                            <div className="mt-3 pt-3 border-t border-dashed">
+                                <div className="flex items-start gap-2 text-sm">
+                                    <Store className="h-4 w-4 text-primary mt-0.5" />
+                                    <div>
+                                        <span className="font-semibold text-foreground">Retailer Response:</span>
+                                        <p className="text-muted-foreground mt-1">{item.reply}</p>
+                                    </div>
+                                </div>
+                            </div>
+                        )}
+
+                        {!item.reply && (
+                            <div className="text-right text-xs text-muted-foreground font-medium mt-2">
+                                — User {item.user_id.substring(0, 6)}...
+                            </div>
+                        )}
                     </CardContent>
                   </Card>
                 ))
