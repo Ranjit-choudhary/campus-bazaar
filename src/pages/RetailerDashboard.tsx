@@ -324,7 +324,50 @@ const RetailerDashboard = () => {
 
         {/* DIALOGS */}
         <Dialog open={isLocationOpen} onOpenChange={setIsLocationOpen}><DialogContent><DialogHeader><DialogTitle>Update Location</DialogTitle></DialogHeader><Input value={locationForm} onChange={e=>setLocationForm(e.target.value)}/><DialogFooter><Button onClick={handleUpdateLocation}>Update</Button></DialogFooter></DialogContent></Dialog>
-        <Dialog open={isAddProductOpen} onOpenChange={setIsAddProductOpen}><DialogContent className="max-w-5xl h-[85vh]"><div className="p-6"><Input placeholder="Search..." value={searchQuery} onChange={e=>setSearchQuery(e.target.value)}/></div><div className="flex-1 overflow-auto p-6"><Table><TableHeader><TableRow><TableHead>Product</TableHead><TableHead>Cost</TableHead><TableHead>Stock</TableHead><TableHead>Action</TableHead></TableRow></TableHeader><TableBody>{filteredWholesale.map(p=><TableRow key={p.id}><TableCell>{p.name}</TableCell><TableCell>₹{Math.floor(p.price*0.7)}</TableCell><TableCell>{p.wholesaler_stock}</TableCell><TableCell><Button size="sm" onClick={()=>handleRestock(p)}>Order</Button></TableCell></TableRow>)}</TableBody></Table></div></DialogContent></Dialog>
+        
+        {/* UPDATED ADD / RESTOCK DIALOG */}
+        <Dialog open={isAddProductOpen} onOpenChange={setIsAddProductOpen}>
+            <DialogContent className="max-w-5xl h-[85vh]">
+                <div className="p-6">
+                    <Input placeholder="Search..." value={searchQuery} onChange={e=>setSearchQuery(e.target.value)}/>
+                </div>
+                <div className="flex-1 overflow-auto p-6">
+                    <Table>
+                        <TableHeader>
+                            <TableRow>
+                                <TableHead>Product</TableHead>
+                                <TableHead>Cost</TableHead>
+                                <TableHead>Stock</TableHead>
+                                <TableHead>Action</TableHead>
+                            </TableRow>
+                        </TableHeader>
+                        <TableBody>
+                            {filteredWholesale.map(p => (
+                                <TableRow key={p.id}>
+                                    <TableCell>{p.name}</TableCell>
+                                    {/* FIXED: Show actual price, not discounted */}
+                                    <TableCell>₹{p.price}</TableCell> 
+                                    <TableCell>{p.wholesaler_stock}</TableCell>
+                                    <TableCell className="flex items-center gap-2">
+                                        {/* FIXED: Add Quantity Input */}
+                                        <Input 
+                                            type="number" 
+                                            className="w-20 h-8" 
+                                            placeholder="Qty" 
+                                            min={1}
+                                            defaultValue={10}
+                                            onChange={(e) => handleQuantityChange(p.id, e.target.value)} 
+                                        />
+                                        <Button size="sm" onClick={() => handleRestock(p)}>Order</Button>
+                                    </TableCell>
+                                </TableRow>
+                            ))}
+                        </TableBody>
+                    </Table>
+                </div>
+            </DialogContent>
+        </Dialog>
+
         <Dialog open={isEditOpen} onOpenChange={setIsEditOpen}><DialogContent><DialogHeader><DialogTitle>Edit</DialogTitle></DialogHeader><Input type="number" value={editForm.price} onChange={e=>setEditForm({...editForm, price:Number(e.target.value)})}/><Input type="number" value={editForm.stock} onChange={e=>setEditForm({...editForm, stock:Number(e.target.value)})}/><DialogFooter><Button onClick={handleUpdateProduct}>Save</Button></DialogFooter></DialogContent></Dialog>
         
         {/* FEEDBACK & REPLY DIALOG */}
