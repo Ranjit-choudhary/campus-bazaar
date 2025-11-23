@@ -7,6 +7,8 @@ interface Coordinates {
 
 interface LocationContextType {
   userLocation: Coordinates | null;
+  userCity: string | null; // Added userCity
+  setUserCity: (city: string) => void; // Added setUserCity function
   error: string | null;
   isLoading: boolean;
 }
@@ -23,6 +25,7 @@ export const useLocation = () => {
 
 export const LocationProvider = ({ children }: { children: ReactNode }) => {
   const [userLocation, setUserLocation] = useState<Coordinates | null>(null);
+  const [userCity, setUserCity] = useState<string | null>(null); // Added state
   const [error, setError] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(true);
 
@@ -51,7 +54,8 @@ export const LocationProvider = ({ children }: { children: ReactNode }) => {
   }, []);
 
   return (
-    <LocationContext.Provider value={{ userLocation, error, isLoading }}>
+    // Added userCity and setUserCity to the value object
+    <LocationContext.Provider value={{ userLocation, userCity, setUserCity, error, isLoading }}>
       {children}
     </LocationContext.Provider>
   );
