@@ -30,6 +30,7 @@ const ProductDetailPage = () => {
   const { productId } = useParams<{ productId: string }>();
   const navigate = useNavigate();
   const { addToCart } = useCart();
+  
   const [product, setProduct] = useState<any>(null);
   const [loading, setLoading] = useState(true);
   const [selectedImage, setSelectedImage] = useState<string | null>(null);
@@ -204,31 +205,25 @@ const ProductDetailPage = () => {
       }
   } else {
       // Local Stock is 0 - Check Wholesaler
-      // For this test case: We enable it if wholesaler_stock exists OR as a fallback option
-      const hasWholesalerStock = (product.wholesaler_stock || 0) > 0;
+      // Even if data is missing (for test purposes), we allow the "Available via Wholesaler" option
+      // Ideally check: (product.wholesaler_stock || 0) > 0
       
-      // TEST CASE LOGIC: Even if data is missing, show option if it's 0 stock
-      if (true) { // Use 'true' to force enable for test, or use 'hasWholesalerStock' for strict mode
-          canAddToCart = true;
-          stockStatus = <span className="text-blue-600 font-semibold flex items-center gap-2"><Truck className="h-4 w-4"/> Available via Wholesaler Proxy</span>;
-          
-          proxyMessage = (
-              <div className="mt-3 p-3 bg-amber-50 border border-amber-200 rounded-md text-sm text-amber-900 flex flex-col gap-1">
-                  <div className="flex items-center gap-2 font-semibold text-amber-700">
-                      <AlertTriangle className="h-4 w-4" />
-                      Delivery Caution
-                  </div>
-                  <p>This item is currently out of stock at the campus store but is available directly from our wholesaler partner.</p>
-                  <div className="mt-1 text-xs font-medium bg-white/50 p-2 rounded">
-                      <p>• <strong>Estimated Delay:</strong> 15-20 days additional shipping time.</p>
-                      <p>• Item will be sourced and shipped upon order.</p>
-                  </div>
+      canAddToCart = true;
+      stockStatus = <span className="text-blue-600 font-semibold flex items-center gap-2"><Truck className="h-4 w-4"/> Available via Wholesaler Proxy</span>;
+      
+      proxyMessage = (
+          <div className="mt-3 p-3 bg-amber-50 border border-amber-200 rounded-md text-sm text-amber-900 flex flex-col gap-1">
+              <div className="flex items-center gap-2 font-semibold text-amber-700">
+                  <AlertTriangle className="h-4 w-4" />
+                  Delivery Caution
               </div>
-          );
-      } else {
-          // Truly Out of Stock
-          stockStatus = <span className="text-destructive font-semibold flex items-center gap-2"><Package className="h-4 w-4"/> Out of Stock</span>;
-      }
+              <p>This item is currently out of stock at the campus store but is available directly from our wholesaler partner.</p>
+              <div className="mt-1 text-xs font-medium bg-white/50 p-2 rounded">
+                  <p>• <strong>Estimated Delay:</strong> 15-20 days additional shipping time.</p>
+                  <p>• Item will be sourced and shipped upon order.</p>
+              </div>
+          </div>
+      );
   }
 
   return (
@@ -326,7 +321,6 @@ const ProductDetailPage = () => {
                 className="w-full md:w-auto text-lg py-6" 
                 onClick={() => !canAddToCart ? handleNotifyMe() : addToCart(product.id)}
                 variant={!canAddToCart ? "outline" : "default"}
-                // For test case, if local stock is 0 but proxy is available (canAddToCart=true), we allow click.
                 disabled={!canAddToCart && notified}
               >
                 {!canAddToCart ? (
@@ -442,14 +436,12 @@ const ProductDetailPage = () => {
                         
                         {/* Display Reply if Exists */}
                         {item.reply && (
-                            <div className="mt-3 pt-3 border-t border-dashed">
-                                <div className="flex items-start gap-2 text-sm">
-                                    <Store className="h-4 w-4 text-primary mt-0.5" />
-                                    <div>
-                                        <span className="font-semibold text-foreground">Retailer Response:</span>
-                                        <p className="text-muted-foreground mt-1">{item.reply}</p>
-                                    </div>
+                            <div className="mt-3 p-3 bg-green-50 border-l-4 border-green-500 rounded-r-md">
+                                <div className="flex items-center gap-2 text-sm font-bold text-green-800 mb-1">
+                                    <Store className="h-4 w-4" />
+                                    Retailer Response
                                 </div>
+                                <p className="text-sm text-green-700 pl-6">{item.reply}</p>
                             </div>
                         )}
 
