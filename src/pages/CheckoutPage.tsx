@@ -10,8 +10,9 @@ import { Checkbox } from '@/components/ui/checkbox';
 import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
 import { useCart } from '@/contexts/CartContext';
 import { toast } from 'sonner';
-import { MapPin, Truck, CreditCard, Wallet, Banknote, Save, Loader2, Crosshair, ShieldCheck } from 'lucide-react';
+import { MapPin, Truck, CreditCard, Wallet, Banknote, Save, Loader2, Crosshair, ShieldCheck, Calendar } from 'lucide-react';
 import { GoogleMap, LoadScript, Marker, Autocomplete } from '@react-google-maps/api';
+import { retailers } from '@/data/products';
 
 const GOOGLE_MAPS_API_KEY = import.meta.env.VITE_GOOGLE_MAPS_API_KEY || "";
 const LIBRARIES: ("places")[] = ["places"];
@@ -32,6 +33,15 @@ interface CheckoutAddress {
   zip_code: string;
   country: string;
 }
+
+// --- HARDCODED RETAILER ADDRESSES ---
+const RETAILER_ADDRESSES: Record<string, string> = {
+  'ret-1': 'Plot 101, Jubilee Hills, Hyderabad, Telangana 500033',
+  'ret-2': 'Shop 4, Park Lane, Secunderabad, Telangana 500003',
+  'ret-3': '2nd Floor, Banjara Hills Rd 12, Hyderabad, Telangana 500034',
+  'ret-4': 'Linking Road, Bandra West, Mumbai, Maharashtra 400050',
+  'ret-5': '100 Feet Road, Indiranagar, Bangalore, Karnataka 560038'
+};
 
 const CheckoutPage = () => {
   const navigate = useNavigate();
@@ -56,12 +66,14 @@ const CheckoutPage = () => {
   const [map, setMap] = useState<google.maps.Map | null>(null);
   const [markerPosition, setMarkerPosition] = useState<{ lat: number; lng: number } | null>(null);
   const autocompleteRef = useRef<google.maps.places.Autocomplete | null>(null);
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
   const [mapLoading, setMapLoading] = useState(false);
 
   const FALLBACK_CENTER = { lat: 28.6139, lng: 77.2090 };
 
   useEffect(() => {
     const initData = async () => {
+      // FIXED: Changed getSession() to getUser() to correctly destructure 'user'
       const { data: { user } } = await supabase.auth.getUser();
       
       if (!user) {
@@ -219,6 +231,9 @@ const CheckoutPage = () => {
   const shipping = orderType === 'pickup' ? 0 : (subtotal > 0 ? 50 : 0);
   const total = subtotal + shipping;
 
+  // Determine unique retailers involved in this cart
+  const uniqueRetailers = Array.from(new Set(cart.map(item => item.products?.retailer_id))).filter(Boolean) as string[];
+
   const handlePlaceOrder = async () => {
       if (orderType === 'delivery' && isEditingAddress) { toast.error("Please save your address first."); return; }
       if (!termsAccepted) { toast.error('You must accept terms.'); return; }
@@ -273,14 +288,13 @@ const CheckoutPage = () => {
     try {
         setLoading(true);
 
-        // 1. Update Inventory & Prepare Details
         const orderDetails = [];
         const retailerInserts = [];
 
         for (const item of cart) {
             let retailerId = item.products?.retailer_id;
 
-            // A. Fallback: Fetch retailer_id from DB if missing (fixes stale cart issue)
+            // A. Fallback: Fetch retailer_id from DB if missing
             if (!retailerId) {
                 const { data: prod } = await supabase
                     .from('products')
@@ -290,15 +304,13 @@ const CheckoutPage = () => {
                 retailerId = prod?.retailer_id;
             }
 
-            // B. Decrement Stock (Fixed RPC Logic)
-            // Try to use RPC first, if it fails or doesn't exist, use standard Update
+            // B. Decrement Stock
             const { error: rpcError } = await supabase.rpc('decrement_stock', { 
                 row_id: item.product_id, 
                 amount: item.quantity 
             });
 
             if (rpcError) {
-                // Standard Update Fallback
                 const { data: currentProd } = await supabase.from('products').select('stock').eq('id', item.product_id).single();
                 const newStock = (currentProd?.stock || 0) - item.quantity;
                 await supabase.from('products').update({ 
@@ -315,7 +327,7 @@ const CheckoutPage = () => {
                 name: item.products?.name
             });
 
-            // D. Prepare Retailer Split Data (stored later)
+            // D. Prepare Retailer Split Data
             if (retailerId) {
                 retailerInserts.push({
                     user_id: user.id,
@@ -342,18 +354,14 @@ const CheckoutPage = () => {
 
         if (error) throw error;
 
-        // 3. Insert Retailer Orders (Now linked to order_id)
+        // 3. Insert Retailer Orders
         if (retailerInserts.length > 0) {
             const finalRetailerInserts = retailerInserts.map(r => ({
                 ...r,
-                order_id: orderData.id // Attach the generated order ID
+                order_id: orderData.id 
             }));
 
-            const { error: retailerError } = await supabase.from('customer_orders').insert(finalRetailerInserts);
-            if (retailerError) {
-                console.error("Failed to notify retailers:", retailerError);
-                // Proceed anyway, don't block user success
-            }
+            await supabase.from('customer_orders').insert(finalRetailerInserts);
         }
 
         await clearCart();
@@ -375,7 +383,24 @@ const CheckoutPage = () => {
         <h1 className="text-3xl font-bold text-foreground mb-8">Checkout</h1>
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
           <div className="lg:col-span-2 space-y-6">
-            <Card><CardHeader><CardTitle>1. Delivery Method</CardTitle></CardHeader><CardContent><RadioGroup value={orderType} onValueChange={(v) => setOrderType(v as any)} className="grid grid-cols-1 sm:grid-cols-2 gap-4"><div className={`flex items-center space-x-2 border p-4 rounded-lg cursor-pointer ${orderType === 'delivery' ? 'border-primary bg-primary/5' : ''}`}><RadioGroupItem value="delivery" id="delivery" /><Label htmlFor="delivery" className="flex-grow cursor-pointer flex items-center gap-3"><Truck className="h-5 w-5" /> Home Delivery</Label></div><div className={`flex items-center space-x-2 border p-4 rounded-lg cursor-pointer ${orderType === 'pickup' ? 'border-primary bg-primary/5' : ''}`}><RadioGroupItem value="pickup" id="pickup" /><Label htmlFor="pickup" className="flex-grow cursor-pointer flex items-center gap-3"><MapPin className="h-5 w-5" /> Store Pickup</Label></div></RadioGroup></CardContent></Card>
+            
+            {/* 1. DELIVERY METHOD */}
+            <Card>
+              <CardHeader>
+                <CardTitle>1. Delivery Method</CardTitle>
+              </CardHeader>
+              <CardContent>
+                <RadioGroup value={orderType} onValueChange={(v) => setOrderType(v as any)} className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                  <div className={`flex items-center space-x-2 border p-4 rounded-lg cursor-pointer ${orderType === 'delivery' ? 'border-primary bg-primary/5' : ''}`}>
+                    <RadioGroupItem value="delivery" id="delivery" />
+                    <Label htmlFor="delivery" className="flex-grow cursor-pointer flex items-center gap-3"><Truck className="h-5 w-5" /> Home Delivery</Label>
+                  </div>
+                  <div className={`flex items-center space-x-2 border p-4 rounded-lg cursor-pointer ${orderType === 'pickup' ? 'border-primary bg-primary/5' : ''}`}><RadioGroupItem value="pickup" id="pickup" /><Label htmlFor="pickup" className="flex-grow cursor-pointer flex items-center gap-3"><MapPin className="h-5 w-5" /> Store Pickup</Label></div>
+                </RadioGroup>
+              </CardContent>
+            </Card>
+            
+            {/* 2a. SHIPPING ADDRESS (For Delivery) */}
             {orderType === 'delivery' && (
                 <Card>
                     <CardHeader className="flex flex-row items-center justify-between"><CardTitle>2. Shipping Address</CardTitle>{!isEditingAddress && savedAddress && <Button variant="ghost" size="sm" onClick={() => setIsEditingAddress(true)}>Change</Button>}</CardHeader>
@@ -393,6 +418,60 @@ const CheckoutPage = () => {
                     </CardContent>
                 </Card>
             )}
+
+            {/* 2b. PICKUP LOCATIONS (For Pickup) */}
+            {orderType === 'pickup' && (
+                <Card>
+                    <CardHeader><CardTitle>2. Pickup Locations</CardTitle></CardHeader>
+                    <CardContent className="space-y-4">
+                        <div className="text-sm text-muted-foreground mb-2">Your items will be available at the following store(s):</div>
+                        {uniqueRetailers.map(id => {
+                            const retailer = retailers.find(r => r.id === id);
+                            
+                            // Calculate items for this retailer to add to calendar description
+                            const retailerItems = cart
+                                .filter(item => item.products?.retailer_id === id)
+                                .map(item => item.products?.name)
+                                .join(', ');
+
+                            const handleAddToCalendar = () => {
+                                if (!retailer) return;
+                                const title = encodeURIComponent(`Pickup from ${retailer.name}`);
+                                const details = encodeURIComponent(`Items to pickup: ${retailerItems}`);
+                                const location = encodeURIComponent(retailer.address || retailer.city);
+                                const url = `https://calendar.google.com/calendar/render?action=TEMPLATE&text=${title}&details=${details}&location=${location}`;
+                                window.open(url, '_blank');
+                            };
+
+                            return (
+                                <div key={id} className="flex flex-col gap-2 p-3 rounded-lg border bg-muted/30">
+                                    <div className="flex items-start gap-3">
+                                        <MapPin className="h-5 w-5 text-primary mt-0.5 shrink-0" />
+                                        <div>
+                                            <div className="font-semibold">{retailer?.name || 'Campus Bazaar Partner'}</div>
+                                            <div className="text-sm text-muted-foreground">{retailer?.address || 'Address details provided upon confirmation'}</div>
+                                        </div>
+                                    </div>
+                                    <Button 
+                                        variant="outline" 
+                                        size="sm" 
+                                        className="ml-8 w-fit h-7 text-xs gap-1"
+                                        onClick={handleAddToCalendar}
+                                    >
+                                        <Calendar className="h-3 w-3" />
+                                        Add to Calendar
+                                    </Button>
+                                </div>
+                            );
+                        })}
+                        {uniqueRetailers.length === 0 && (
+                             <div className="text-sm text-muted-foreground">Store details will be provided in your order confirmation.</div>
+                        )}
+                    </CardContent>
+                </Card>
+            )}
+
+            {/* 3. PAYMENT */}
             <Card><CardHeader><CardTitle>3. Payment Method</CardTitle></CardHeader><CardContent><RadioGroup value={paymentMethod} onValueChange={(v) => setPaymentMethod(v as any)} className="space-y-3"><div className={`flex items-center space-x-3 border p-4 rounded-lg cursor-pointer ${paymentMethod === 'card' ? 'border-primary ring-1 ring-primary' : ''}`}><RadioGroupItem value="card" id="card" /><Label htmlFor="card" className="flex-grow cursor-pointer flex items-center gap-3"><CreditCard className="h-5 w-5 text-blue-600" /> Card (Razorpay)</Label></div><div className={`flex items-center space-x-3 border p-4 rounded-lg cursor-pointer ${paymentMethod === 'upi' ? 'border-primary ring-1 ring-primary' : ''}`}><RadioGroupItem value="upi" id="upi" /><Label htmlFor="upi" className="flex-grow cursor-pointer flex items-center gap-3"><Wallet className="h-5 w-5 text-green-600" /> UPI (Razorpay)</Label></div><div className={`flex items-center space-x-3 border p-4 rounded-lg cursor-pointer ${paymentMethod === 'cod' ? 'border-primary ring-1 ring-primary' : ''}`}><RadioGroupItem value="cod" id="cod" /><Label htmlFor="cod" className="flex-grow cursor-pointer flex items-center gap-3"><Banknote className="h-5 w-5 text-orange-600" /> Cash on Delivery</Label></div></RadioGroup></CardContent></Card>
           </div>
           <div className="lg:col-span-1">

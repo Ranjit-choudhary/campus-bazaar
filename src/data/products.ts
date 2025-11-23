@@ -4,10 +4,11 @@ export interface Retailer {
   email: string;
   description: string;
   rating: number;
-  city: string; // Added city field
+  city: string;
+  address: string; // Added address field
 }
 
-// Updated Retailers with Locations (e.g., mix of Hyderabad cities for testing)
+// Updated Retailers with Hardcoded Addresses
 export const retailers: Retailer[] = [
   { 
     id: 'ret-1', 
@@ -15,7 +16,8 @@ export const retailers: Retailer[] = [
     email: 'madeeksuk468@gmail.com', 
     description: 'General dorm essentials and basics.', 
     rating: 4.5,
-    city: 'Hyderabad' 
+    city: 'Hyderabad',
+    address: 'Plot 101, Jubilee Hills, Hyderabad, Telangana 500033'
   },
   { 
     id: 'ret-2', 
@@ -23,7 +25,8 @@ export const retailers: Retailer[] = [
     email: 'f20230524@hyderabad.bits-pilani.ac.in', 
     description: 'Specialized in pop-culture and fandom merch.', 
     rating: 4.8,
-    city: 'Secunderabad'
+    city: 'Bengaluru',
+    address: '3156, 12th Main Rd, HAL 2nd Stage, Defence Colony, Domlur, Bengaluru, Karnataka 560008'
   },
   { 
     id: 'ret-3', 
@@ -31,7 +34,8 @@ export const retailers: Retailer[] = [
     email: 'f20231226@hyderabad.bits-pilani.ac.in', 
     description: 'Boho, minimalist, and plant-based decor.', 
     rating: 4.2,
-    city: 'Hyderabad'
+    city: 'Delhi',
+    address: 'Shop Number 13, Central Market, Lajpat Nagar, New Delhi 110065'
   },
   { 
     id: 'ret-4', 
@@ -39,7 +43,8 @@ export const retailers: Retailer[] = [
     email: 'f20231385@hyderabad.bits-pilani.ac.in', 
     description: 'Hardcore gaming and sci-fi collectibles.', 
     rating: 4.7,
-    city: 'Mumbai' // Different city to test filtering
+    city: 'Mumbai',
+    address: 'Linking Road, Bandra West, Mumbai, Maharashtra 400050'
   },
   { 
     id: 'ret-5', 
@@ -47,7 +52,8 @@ export const retailers: Retailer[] = [
     email: 'notrishabhsingh18117@gmail.com', 
     description: 'Vintage posters and classic music memorabilia.', 
     rating: 4.6,
-    city: 'Bangalore' // Different city to test filtering
+    city: 'Chennai',
+    address: '7, Pattullos Rd, Express Estate, Thousand Lights, Chennai, Tamil Nadu 600014'
   },
 ];
 
