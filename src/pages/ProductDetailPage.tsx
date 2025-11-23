@@ -1,10 +1,11 @@
+// ... existing imports
 import { useState, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { supabase } from '@/lib/supabase';
 import { useCart } from '@/contexts/CartContext';
 import Navbar from '@/components/Navbar';
 import { Button } from '@/components/ui/button';
-import { ArrowLeft, ShoppingCart, Send, Package, Store, Star, Bell, Tag, MessageSquare } from 'lucide-react'; 
+import { ArrowLeft, ShoppingCart, Send, Package, Store, Star, Bell, Tag, MessageSquare, Truck, AlertTriangle } from 'lucide-react'; 
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Textarea } from '@/components/ui/textarea';
 import { Label } from '@/components/ui/label';
@@ -189,13 +190,38 @@ const ProductDetailPage = () => {
     ? (ratings.reduce((a, b) => a + b, 0) / ratings.length).toFixed(1) 
     : null;
 
+  // --- Stock Status Logic with Wholesaler Proxy ---
   let stockStatus = null;
-  if (product.stock === 0) {
-      stockStatus = <span className="text-destructive font-semibold flex items-center gap-2"><Package className="h-4 w-4"/> Out of Stock</span>;
-  } else if (product.stock < 10) {
-      stockStatus = <span className="text-orange-600 font-semibold flex items-center gap-2"><Package className="h-4 w-4"/> Only {product.stock} left in stock - order soon.</span>;
+  let canAddToCart = false;
+  let proxyMessage = null;
+
+  if (product.stock > 0) {
+      // Normal Stock
+      canAddToCart = true;
+      if (product.stock < 10) {
+          stockStatus = <span className="text-orange-600 font-semibold flex items-center gap-2"><Package className="h-4 w-4"/> Only {product.stock} left in stock - order soon.</span>;
+      } else {
+          stockStatus = <span className="text-green-600 font-semibold flex items-center gap-2"><Package className="h-4 w-4"/> In Stock ({product.stock} units)</span>;
+      }
   } else {
-      stockStatus = <span className="text-green-600 font-semibold flex items-center gap-2"><Package className="h-4 w-4"/> In Stock ({product.stock} units)</span>;
+      // Local Stock is 0, check Wholesaler
+      if ((product.wholesaler_stock || 0) > 0) {
+          canAddToCart = true;
+          stockStatus = <span className="text-blue-600 font-semibold flex items-center gap-2"><Truck className="h-4 w-4"/> Available via Wholesaler</span>;
+          proxyMessage = (
+              <div className="mt-2 p-3 bg-yellow-50 border border-yellow-200 rounded-md text-sm text-yellow-800 flex flex-col gap-1">
+                  <div className="flex items-center gap-2 font-semibold">
+                      <AlertTriangle className="h-4 w-4" />
+                      Delivery Caution
+                  </div>
+                  <p>This item is fulfilled directly from our wholesaler partner.</p>
+                  <p><strong>Estimated Delivery Delay:</strong> 15-20 days</p>
+              </div>
+          );
+      } else {
+          // Truly Out of Stock
+          stockStatus = <span className="text-destructive font-semibold flex items-center gap-2"><Package className="h-4 w-4"/> Out of Stock</span>;
+      }
   }
 
   return (
@@ -279,8 +305,9 @@ const ProductDetailPage = () => {
 
             <p className="text-3xl font-semibold text-primary mb-4">₹{product.price}</p>
             
-            <div className="mb-6">
+            <div className="mb-4">
                 {stockStatus}
+                {proxyMessage}
             </div>
 
             <p className="text-muted-foreground mb-8 flex-grow text-lg leading-relaxed">{product.description}</p>
@@ -290,16 +317,16 @@ const ProductDetailPage = () => {
               <Button 
                 size="lg" 
                 className="w-full md:w-auto text-lg py-6" 
-                onClick={() => product.stock === 0 ? handleNotifyMe() : addToCart(product.id)}
-                variant={product.stock === 0 ? "outline" : "default"}
-                disabled={product.stock === 0 && notified}
+                onClick={() => !canAddToCart ? handleNotifyMe() : addToCart(product.id)}
+                variant={!canAddToCart ? "outline" : "default"}
+                disabled={!canAddToCart && notified}
               >
-                {product.stock === 0 ? (
+                {!canAddToCart ? (
                     <Bell className={cn("mr-2 h-5 w-5", notified && "fill-current")} />
                 ) : (
                     <ShoppingCart className="mr-2 h-5 w-5" />
                 )}
-                {product.stock === 0 ? (notified ? 'Notified' : 'Notify Me') : 'Add to Cart'}
+                {!canAddToCart ? (notified ? 'Notified' : 'Notify Me') : 'Add to Cart'}
               </Button>
             </div>
           </div>

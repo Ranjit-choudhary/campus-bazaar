@@ -1,3 +1,4 @@
+// ... existing imports
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { supabase } from '@/lib/supabase';
@@ -73,7 +74,6 @@ const CheckoutPage = () => {
 
   useEffect(() => {
     const initData = async () => {
-      // FIXED: Changed getSession() to getUser() to correctly destructure 'user'
       const { data: { user } } = await supabase.auth.getUser();
       
       if (!user) {
@@ -83,7 +83,6 @@ const CheckoutPage = () => {
       setUser(user);
       setAddressForm(prev => ({ ...prev, full_name: user.user_metadata.full_name || '' }));
 
-      // 1. Try to fetch saved address
       const { data: address } = await supabase
         .from('addresses')
         .select('*')
@@ -101,7 +100,7 @@ const CheckoutPage = () => {
     initData();
   }, [navigate]);
 
-  // --- LOCATION LOGIC ---
+  // --- LOCATION LOGIC (Keep as is) ---
   const getUserLocation = () => {
       if (navigator.geolocation) {
           setMapLoading(true);
@@ -231,7 +230,6 @@ const CheckoutPage = () => {
   const shipping = orderType === 'pickup' ? 0 : (subtotal > 0 ? 50 : 0);
   const total = subtotal + shipping;
 
-  // Determine unique retailers involved in this cart
   const uniqueRetailers = Array.from(new Set(cart.map(item => item.products?.retailer_id))).filter(Boolean) as string[];
 
   const handlePlaceOrder = async () => {
@@ -283,7 +281,7 @@ const CheckoutPage = () => {
       try { new window.Razorpay(options).open(); } catch (error) { toast.error("Payment init failed"); setLoading(false); }
   };
 
-  // --- FINALIZE ORDER ---
+  // --- FINALIZE ORDER LOGIC (UPDATED FOR PROXY AVAILABILITY) ---
   const finalizeOrder = async (paymentStatus: string, paymentId?: string) => {
     try {
         setLoading(true);
@@ -292,55 +290,87 @@ const CheckoutPage = () => {
         const retailerInserts = [];
 
         for (const item of cart) {
-            let retailerId = item.products?.retailer_id;
+            // 1. Fetch CURRENT stock status for this specific item
+            const { data: currentProd } = await supabase
+                .from('products')
+                .select('stock, wholesaler_stock, wholesaler_id, retailer_id')
+                .eq('id', item.product_id)
+                .single();
 
-            // A. Fallback: Fetch retailer_id from DB if missing
-            if (!retailerId) {
-                const { data: prod } = await supabase
-                    .from('products')
-                    .select('retailer_id')
-                    .eq('id', item.product_id)
-                    .single();
-                retailerId = prod?.retailer_id;
+            if (!currentProd) {
+                toast.error(`Product ${item.products?.name} unavailable.`);
+                throw new Error(`Product ${item.product_id} not found.`);
             }
 
-            // B. Decrement Stock
-            const { error: rpcError } = await supabase.rpc('decrement_stock', { 
-                row_id: item.product_id, 
-                amount: item.quantity 
-            });
+            let finalRetailerId = item.products?.retailer_id || currentProd.retailer_id;
+            const itemQuantity = item.quantity;
 
-            if (rpcError) {
-                const { data: currentProd } = await supabase.from('products').select('stock').eq('id', item.product_id).single();
-                const newStock = (currentProd?.stock || 0) - item.quantity;
-                await supabase.from('products').update({ 
-                    stock: Math.max(0, newStock), 
-                    in_stock: newStock > 0 
+            // 2. Check Stock Logic
+            if (currentProd.stock >= itemQuantity) {
+                // CASE A: Local Stock Available -> Decrement Local Stock
+                const { error: rpcError } = await supabase.rpc('decrement_stock', { 
+                    row_id: item.product_id, 
+                    amount: itemQuantity 
+                });
+
+                // Fallback if RPC fails (rare, but safety net)
+                if (rpcError) {
+                    const newStock = (currentProd.stock || 0) - itemQuantity;
+                    await supabase.from('products').update({ 
+                        stock: Math.max(0, newStock), 
+                        in_stock: newStock > 0 
+                    }).eq('id', item.product_id);
+                }
+            } 
+            else if (currentProd.wholesaler_stock >= itemQuantity) {
+                // CASE B: Local OOS, but Wholesaler Has Stock (Proxy Order)
+                // 1. Create RESTOCK Order automatically so Wholesaler sees it
+                if (currentProd.wholesaler_id && finalRetailerId) {
+                    await supabase.from('restock_orders').insert({
+                        retailer_id: finalRetailerId,
+                        wholesaler_id: currentProd.wholesaler_id,
+                        product_id: item.product_id,
+                        quantity: itemQuantity,
+                        status: 'paid' // Mark as paid since customer paid us
+                    });
+                }
+
+                // 2. Decrement WHOLESALER Stock (Master Inventory)
+                const newWholesalerStock = (currentProd.wholesaler_stock || 0) - itemQuantity;
+                await supabase.from('products').update({
+                    wholesaler_stock: Math.max(0, newWholesalerStock)
                 }).eq('id', item.product_id);
+
+                toast.info(`Item ${item.products?.name} is being sourced from wholesaler (15-20 days delay).`);
+            } 
+            else {
+                // CASE C: Both Out of Stock
+                toast.error(`Item ${item.products?.name} is out of stock.`);
+                throw new Error(`Stock mismatch for ${item.products?.name}`);
             }
 
-            // C. Build Main Order Details
+            // 3. Build Main Order Details (Same for both cases)
             orderDetails.push({
                 product_id: item.product_id,
-                quantity: item.quantity,
+                quantity: itemQuantity,
                 price: item.products?.price,
                 name: item.products?.name
             });
 
-            // D. Prepare Retailer Split Data
-            if (retailerId) {
+            // 4. Prepare Retailer Split Data
+            if (finalRetailerId) {
                 retailerInserts.push({
                     user_id: user.id,
-                    retailer_id: retailerId,
+                    retailer_id: finalRetailerId,
                     product_id: item.product_id,
-                    quantity: item.quantity,
-                    total_price: (item.products?.price || 0) * item.quantity,
+                    quantity: itemQuantity,
+                    total_price: (item.products?.price || 0) * itemQuantity,
                     status: 'placed'
                 });
             }
         }
 
-        // 2. Insert Main Order
+        // 5. Insert Main Order
         const { data: orderData, error } = await supabase.from('orders').insert({
             user_id: user.id, 
             total_amount: total, 
@@ -354,7 +384,7 @@ const CheckoutPage = () => {
 
         if (error) throw error;
 
-        // 3. Insert Retailer Orders
+        // 6. Insert Retailer Orders
         if (retailerInserts.length > 0) {
             const finalRetailerInserts = retailerInserts.map(r => ({
                 ...r,
@@ -428,7 +458,6 @@ const CheckoutPage = () => {
                         {uniqueRetailers.map(id => {
                             const retailer = retailers.find(r => r.id === id);
                             
-                            // Calculate items for this retailer to add to calendar description
                             const retailerItems = cart
                                 .filter(item => item.products?.retailer_id === id)
                                 .map(item => item.products?.name)

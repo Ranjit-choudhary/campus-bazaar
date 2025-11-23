@@ -1,3 +1,4 @@
+
 import { createContext, useContext, useState, ReactNode } from 'react';
 import { supabase } from '../lib/supabase';
 import { toast } from 'sonner';
@@ -7,7 +8,8 @@ interface ProductDetails {
   price: number;
   images: string[];
   description?: string;
-  retailer_id?: string; // <--- ADDED THIS! Critical for splitting orders.
+  retailer_id?: string;
+  wholesaler_id?: string; // Added this
 }
 
 interface CartItem {
@@ -44,10 +46,10 @@ export const CartProvider = ({ children }: { children: ReactNode }) => {
 
   const addToCart = async (productId: string | number, quantity = 1) => {
     try {
-        // 1. Fetch product AND retailer_id from Supabase
+        // 1. Fetch product AND retailer_id AND wholesaler_id from Supabase
         const { data: product, error } = await supabase
             .from('products')
-            .select('*, retailer_id') // Explicitly selecting retailer_id helps verify it exists
+            .select('*, retailer_id, wholesaler_id') 
             .eq('id', productId)
             .single();
 
@@ -68,7 +70,7 @@ export const CartProvider = ({ children }: { children: ReactNode }) => {
                 newCart[existingIndex].quantity += quantity;
                 return newCart;
             } else {
-                // Add new item WITH retailer_id
+                // Add new item WITH IDs
                 return [...prev, { 
                     id: crypto.randomUUID(), 
                     product_id: productId, 
@@ -78,7 +80,8 @@ export const CartProvider = ({ children }: { children: ReactNode }) => {
                         price: product.price, 
                         images: product.images || ['/placeholder.svg'],
                         description: product.description,
-                        retailer_id: product.retailer_id // <--- SAVING IT HERE
+                        retailer_id: product.retailer_id,
+                        wholesaler_id: product.wholesaler_id // Captured here
                     }
                 }];
             }
